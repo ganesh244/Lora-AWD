@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { SheetRow } from '../types';
 import { StatusBadge } from './StatusBadge';
-import { Database, Clock, Radio, Download, AlertCircle, Filter, ChevronDown, Table } from 'lucide-react';
+import { Database, Clock, Download, AlertCircle, Filter, ChevronDown, Table } from 'lucide-react';
 import { mapDeviceNickname, formatDateTime } from '../services/dataService';
-import { SignalBars } from './SignalBars';
+import { SignalBars, getSignalQuality } from './SignalBars';
 
 interface Props {
   logs: SheetRow[];
@@ -83,7 +83,7 @@ export const DataLogs: React.FC<Props> = ({ logs, error }) => {
             <Table size={20} />
           </div>
           <div>
-            <h3 className="font-bold text-slate-800">System Data Logs</h3>
+            <h3 className="font-bold text-slate-800">Paddy Field Logs</h3>
             <p className="text-xs text-slate-500">Real-time telemetry from Google Sheets</p>
           </div>
         </div>
@@ -125,60 +125,76 @@ export const DataLogs: React.FC<Props> = ({ logs, error }) => {
       </div>
       
       <div className="overflow-auto flex-1">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+        <table className="min-w-full divide-y divide-slate-100 text-left">
+          <thead className="bg-slate-50 sticky top-0 z-10 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Timestamp</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Device</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Level</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Network Info</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Storage</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">Timestamp</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">Device</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">Level</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">Status</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 hidden md:table-cell">Network Info</th>
+              <th className="px-6 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 hidden lg:table-cell">Storage</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {filteredLogs.map((row, idx) => (
-              <tr key={idx} className="hover:bg-slate-50 transition-colors group">
-                <td className="px-6 py-3 whitespace-nowrap text-sm text-slate-600 font-mono border-l-4 border-transparent hover:border-blue-500">
-                  <div className="flex items-center gap-2">
-                    <Clock size={14} className="text-slate-400 group-hover:text-blue-500" />
-                    {formatDateTime(row["Gateway Received Time"])}
-                  </div>
-                </td>
-                <td className="px-6 py-3 whitespace-nowrap">
-                  <div className="text-sm font-medium text-slate-900">{mapDeviceNickname(row["Device ID"])}</div>
-                  <div className="text-xs text-slate-400 font-mono">{row["Device ID"]}</div>
-                </td>
-                <td className="px-6 py-3 whitespace-nowrap">
-                  <div className="text-sm font-bold text-slate-800">
-                    {Number(row["Water Level (cm)"]).toFixed(1)} <span className="font-normal text-slate-400 text-xs">cm</span>
-                  </div>
-                </td>
-                <td className="px-6 py-3 whitespace-nowrap">
-                  <StatusBadge status={row["Status"]} />
-                </td>
-                <td className="px-6 py-3 whitespace-nowrap text-sm text-slate-600 hidden md:table-cell">
-                  <div className="flex flex-col">
-                    <div className="flex items-center gap-2">
-                       <span className="text-xs font-bold text-slate-600">{row["Network"]}</span>
-                       <SignalBars 
-                         type={row["Network"] === "WiFi" ? "WiFi" : "GSM"} 
-                         value={row["Network"] === "WiFi" ? row["WiFi Strength (dBm)"] : row["GSM Strength (RSSI)"]} 
-                       />
-                    </div>
-                    <span className="text-[10px] text-slate-400 mt-0.5">
-                      {row["Network"] === "WiFi" ? `${row["WiFi Strength (dBm)"]} dBm` : `${row["GSM Strength (RSSI)"]} CSQ`}
-                    </span>
-                  </div>
-                </td>
-                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-500 hidden lg:table-cell">
-                  SD: {row["SD Free (MB)"]} MB
-                </td>
-              </tr>
-            ))}
+          <tbody className="bg-white divide-y divide-slate-100">
+            {filteredLogs.map((row, idx) => {
+                const isWifi = row["Network"] === "WiFi";
+                const signalVal = isWifi ? row["WiFi Strength (dBm)"] : row["GSM Strength (RSSI)"];
+                const { label: signalLabel, textColor: signalColor } = getSignalQuality(isWifi ? 'WiFi' : 'GSM', signalVal);
+                
+                return (
+                  <tr key={idx} className="group hover:bg-blue-50/50 transition-colors duration-200 ease-in-out">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-mono border-l-[3px] border-transparent group-hover:border-blue-500 transition-all">
+                      <div className="flex items-center gap-2">
+                        <Clock size={14} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
+                        {formatDateTime(row["Gateway Received Time"])}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-slate-800">{mapDeviceNickname(row["Device ID"])}</span>
+                        <span className="text-[11px] text-slate-400 font-mono mt-0.5">{row["Device ID"]}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-sm font-bold text-slate-900">{Number(row["Water Level (cm)"]).toFixed(1)}</span>
+                        <span className="text-xs font-medium text-slate-400">cm</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="transform group-hover:scale-105 transition-transform origin-left duration-200">
+                        <StatusBadge status={row["Status"]} />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 hidden md:table-cell">
+                      <div className="flex items-center gap-3">
+                        <SignalBars 
+                          type={isWifi ? "WiFi" : "GSM"} 
+                          value={signalVal} 
+                        />
+                        <div className="flex flex-col">
+                            <span className="text-xs font-bold text-slate-700 leading-none mb-1">{row["Network"]}</span>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-slate-400 leading-none font-mono">
+                                {isWifi ? `${signalVal} dBm` : `${signalVal} CSQ`}
+                                </span>
+                                <span className={`text-[9px] font-bold bg-slate-50 px-1 rounded ${signalColor}`}>
+                                    {signalLabel}
+                                </span>
+                            </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500 hidden lg:table-cell font-mono">
+                      {row["SD Free (MB)"]} <span className="text-slate-400">MB free</span>
+                    </td>
+                  </tr>
+                );
+            })}
             {filteredLogs.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic">
+                <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic bg-slate-50/30">
                   No logs found.
                 </td>
               </tr>

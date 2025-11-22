@@ -139,29 +139,33 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
 
     sortedRows.forEach(row => {
       const deviceId = row["Device ID"];
-      const level = Number(row["Water Level (cm)"]);
+      
+      // Raw water level from sensor (assumed cm)
+      const rawLevel = Number(row["Water Level (cm)"]);
+      const realLevel = rawLevel;
+      
       const time = row["Gateway Received Time"];
       
       if (!groupedSensors[deviceId]) {
         groupedSensors[deviceId] = {
           id: deviceId,
           name: mapDeviceNickname(deviceId),
-          currentLevel: level,
+          currentLevel: realLevel,
           lastUpdated: time,
-          status: row["Status"] as any,
+          status: row["Status"] as any, // Note: Status from sheet might be based on raw, but we display our calculated level
           history: [],
           raw: row
         };
       }
 
-      groupedSensors[deviceId].currentLevel = level;
+      groupedSensors[deviceId].currentLevel = realLevel;
       groupedSensors[deviceId].lastUpdated = time;
       groupedSensors[deviceId].status = row["Status"] as any;
       groupedSensors[deviceId].raw = row;
 
       groupedSensors[deviceId].history.push({
         time: time,
-        level: level
+        level: realLevel
       });
     });
 

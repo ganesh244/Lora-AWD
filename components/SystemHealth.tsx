@@ -2,7 +2,7 @@ import React from 'react';
 import { GatewayStatus } from '../types';
 import { Wifi, Signal, Database, UploadCloud, Activity, Smartphone, CalendarClock } from 'lucide-react';
 import { formatDateTime } from '../services/dataService';
-import { SignalBars } from './SignalBars';
+import { SignalBars, getSignalQuality } from './SignalBars';
 
 interface Props {
   status: GatewayStatus;
@@ -11,6 +11,7 @@ interface Props {
 export const SystemHealth: React.FC<Props> = ({ status }) => {
   const isWifi = status.network === 'WiFi';
   const signalValue = isWifi ? status.wifiSignal : status.gsmSignal;
+  const { label: signalLabel, textColor: signalColor } = getSignalQuality(isWifi ? 'WiFi' : 'GSM', signalValue);
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-8">
@@ -51,7 +52,9 @@ export const SystemHealth: React.FC<Props> = ({ status }) => {
                     {signalValue} <span className="text-xs font-normal text-slate-400">{isWifi ? 'dBm' : 'CSQ'}</span>
                  </span>
             </div>
-            <span className="text-[10px] text-slate-400 mt-1 font-medium">Connection Quality</span>
+            <span className={`text-[10px] mt-1 font-bold ${signalColor}`}>
+               {signalLabel} Connection
+            </span>
         </div>
 
         <HealthMetric 

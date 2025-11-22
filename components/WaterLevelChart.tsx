@@ -87,7 +87,7 @@ export const WaterLevelChart: React.FC<Props> = ({ data }) => {
                             onClick={() => setRange(r)}
                             className={`flex-1 lg:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all capitalize ${
                                 range === r 
-                                ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200 shadow-sm' 
+                                ? 'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 shadow-sm' 
                                 : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
                             }`}
                         >
@@ -151,6 +151,7 @@ export const WaterLevelChart: React.FC<Props> = ({ data }) => {
                             axisLine={false}
                             unit=" cm"
                             width={40}
+                            domain={[0, 30]}
                         />
                         <Tooltip 
                             cursor={{ stroke: '#64748b', strokeWidth: 1, strokeDasharray: '4 4' }}
@@ -171,9 +172,11 @@ export const WaterLevelChart: React.FC<Props> = ({ data }) => {
                                 return label;
                             }}
                         />
-                        <ReferenceLine y={7} stroke="#f472b6" strokeDasharray="3 3" label={{ value: "Low Limit", position: 'insideRight', fill: '#f472b6', fontSize: 10, fontWeight: 600 }} />
-                        <ReferenceLine y={20} stroke="#a855f7" strokeDasharray="3 3" label={{ value: "Flood Risk", position: 'insideRight', fill: '#a855f7', fontSize: 10, fontWeight: 600 }} />
                         
+                        {/* 0-30cm Scale: 15cm is Soil Surface, 25cm is High */}
+                        <ReferenceLine y={25} stroke="#ef4444" strokeDasharray="3 3" label={{ value: "High Water", position: 'insideRight', fill: '#ef4444', fontSize: 10, fontWeight: 600 }} />
+                        <ReferenceLine y={15} stroke="#16a34a" strokeWidth={1} label={{ value: "Soil Surface", position: 'insideRight', fill: '#16a34a', fontSize: 10, fontWeight: 600 }} />
+
                         <Area 
                             type="monotone" 
                             dataKey="level" 
