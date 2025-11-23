@@ -28,6 +28,7 @@ export const calculateStage = (cfg: CropConfig) => {
   const totalDuration = VARIETY_DATA[cfg.variety].avg;
 
   // Dynamic Stage Calculation based on % of Total Duration
+  // NOTE: Gauge Scale: 0cm = Bottom, 15cm = Soil Surface, 30cm = Top
   
   let stageIndex = 0;
   let stageName = "Establishment";
@@ -40,13 +41,13 @@ export const calculateStage = (cfg: CropConfig) => {
   if (pct < 12) {
     stageIndex = 0;
     stageName = "Transplanting / Recovery";
-    advice = "Keep soil saturated (Gauge 15-17cm). Avoid deep flood.";
+    advice = "Keep soil saturated (Gauge 15-17cm). Avoid deep flood (>18cm).";
     phase = "Vegetative";
     managementTips = [
         { category: "Pest", text: "Monitor for Golden Apple Snails (feed on seedlings)", icon: Bug },
         { category: "Weeds", text: "Apply pre-emergence herbicide within 3-5 days", icon: AlertCircle },
         { category: "Care", text: "Replant missing hills (gap filling) within 7 days", icon: Sprout },
-        { category: "Water", text: "Keep saturated. Deep water (>3cm) drowns seedlings", icon: Droplets }
+        { category: "Water", text: "Keep saturated. Deep water (>18cm on gauge) drowns seedlings", icon: Droplets }
     ];
   } 
   else if (pct < 35) {
@@ -58,16 +59,16 @@ export const calculateStage = (cfg: CropConfig) => {
         { category: "Nutrient", text: "Apply 1st Nitrogen Topdress (Urea) for tillers", icon: Leaf },
         { category: "Weeds", text: "Critical time for weeding. Weeds steal light.", icon: AlertCircle },
         { category: "Pest", text: "Check for Whorl Maggot or Caseworm damage", icon: Bug },
-        { category: "Water", text: "Shallow water promotes tillering. AWD is safe.", icon: Droplets }
+        { category: "Water", text: "Shallow water (Gauge 17-20cm) promotes tillering. AWD is safe.", icon: Droplets }
     ];
   }
   else if (pct < 50) {
     stageIndex = 2;
     stageName = "Stem Elongation";
-    advice = "Periodic drying (AWD) is beneficial now. Allow soil to crack slightly.";
+    advice = "Periodic drying (AWD) is beneficial. Allow gauge to drop <15cm.";
     phase = "Vegetative";
     managementTips = [
-        { category: "Water", text: "Practice AWD. Drying deepens root system", icon: Droplets },
+        { category: "Water", text: "Practice AWD (drop to <15cm). Drying deepens roots", icon: Droplets },
         { category: "Nutrient", text: "Apply Potassium (K) for strong stems", icon: Leaf },
         { category: "Pest", text: "Scout for Stem Borer deadhearts (white heads)", icon: Bug },
         { category: "Disease", text: "Inspect lower sheath for Sheath Blight", icon: AlertCircle }
@@ -79,7 +80,7 @@ export const calculateStage = (cfg: CropConfig) => {
     advice = "Flood Required! Keep 5cm+ depth (Gauge >20cm). Do not stress.";
     phase = "Reproductive";
     managementTips = [
-        { category: "Water", text: "Do NOT drain. Water stress reduces yield now", icon: Droplets },
+        { category: "Water", text: "Do NOT drain (Gauge must be >20cm). Stress reduces yield.", icon: Droplets },
         { category: "Care", text: "Protect the flag leaf (provides 50% of yield)", icon: Sun },
         { category: "Pest", text: "Control rats - they prefer sweet stalks now", icon: Bug },
         { category: "Nutrient", text: "Stop Nitrogen to avoid attracting pests", icon: Leaf }
@@ -88,7 +89,7 @@ export const calculateStage = (cfg: CropConfig) => {
   else if (pct < 75) {
     stageIndex = 4;
     stageName = "Heading / Flowering";
-    advice = "Maintain steady water. Avoid drainage. High sensitivity to stress.";
+    advice = "Maintain steady water (Gauge 17-20cm). Avoid drainage.";
     phase = "Reproductive";
     managementTips = [
         { category: "Care", text: "Avoid spraying 9am-3pm to save pollinators", icon: Timer },
@@ -104,7 +105,7 @@ export const calculateStage = (cfg: CropConfig) => {
     phase = "Ripening";
     managementTips = [
         { category: "Pest", text: "Protect ripening grain from birds and rats", icon: Bug },
-        { category: "Water", text: "Standing water not required, just moist soil", icon: Droplets },
+        { category: "Water", text: "Standing water not required, just moist soil (Gauge ~15cm)", icon: Droplets },
         { category: "Care", text: "Remove off-types (rogueing) for purity", icon: Sprout },
         { category: "Harvest", text: "Plan harvest when 85% grains are golden", icon: Scissors }
     ];
@@ -115,14 +116,14 @@ export const calculateStage = (cfg: CropConfig) => {
     advice = "Drain field completely (Gauge <15cm) to hasten ripening.";
     phase = "Ripening";
     managementTips = [
-        { category: "Water", text: "Drain field 10-15 days before harvest", icon: Droplets },
+        { category: "Water", text: "Drain field (Gauge <15cm) 10-15 days before harvest", icon: Droplets },
         { category: "Harvest", text: "Check grain moisture (target 20-24%)", icon: Scissors },
         { category: "Care", text: "Prepare threshing equipment and mats", icon: BookOpen }
     ];
   } else {
     stageIndex = 7;
     stageName = "Harvest Ready";
-    advice = "Field should be dry.";
+    advice = "Field should be dry (Gauge <15cm).";
     phase = "Finished";
     managementTips = [
         { category: "Harvest", text: "Harvest immediately to avoid shattering", icon: Scissors },
@@ -184,7 +185,7 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather }) => {
 
     // Temp Analysis
     if (weather.temp > 35 && stageIndex === 4) {
-        alerts.push({ icon: Thermometer, text: "Heat Stress! Flood field (10cm) to cool canopy.", color: "text-red-600", bg: "bg-red-50" });
+        alerts.push({ icon: Thermometer, text: "Heat Stress! Flood field (Gauge >20cm) to cool canopy.", color: "text-red-600", bg: "bg-red-50" });
     }
 
     return alerts;
