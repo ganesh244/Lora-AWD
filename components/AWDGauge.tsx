@@ -13,42 +13,62 @@ export const AWDGauge: React.FC<Props> = ({ level, max = 30 }) => {
   const percent = Math.min(Math.max((level / max) * 100, 0), 100);
 
   return (
-    <div className="flex items-center h-28 gap-3 select-none">
-       {/* Visual Pipe */}
-       <div className="relative h-full w-8 bg-slate-50 rounded-full border-2 border-slate-200 overflow-hidden shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)] shrink-0">
-           {/* Soil Section (Bottom 50%) */}
-           <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-[#d6d3d1]/30 border-t border-emerald-500/30">
-                {/* Soil hatching pattern */}
-                <div className="w-full h-full opacity-20" 
-                     style={{ backgroundImage: 'repeating-linear-gradient(-45deg, #78716c 0, #78716c 1px, transparent 0, transparent 6px)' }}>
-                </div>
-           </div>
-
-           {/* Water Fill */}
-           <div 
-                className="absolute bottom-0 left-0 right-0 bg-blue-500/80 transition-all duration-1000 ease-out border-t border-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.3)]"
-                style={{ height: `${percent}%` }}
-           >
-                {/* Water reflection/glint */}
-                <div className="absolute top-0 left-1 right-1 h-full bg-gradient-to-r from-white/30 to-transparent"></div>
-                {/* Meniscus */}
-                <div className="absolute top-0 left-0 right-0 h-[1px] bg-white/60"></div>
-           </div>
-
-           {/* Soil Surface Marker Line (Fixed at 50%) */}
-           <div className="absolute bottom-1/2 left-0 right-0 h-[1px] bg-emerald-500 z-10 w-full"></div>
+    <div className="relative flex items-end justify-center h-32 w-24 select-none ml-2">
+       
+       {/* Soil Background (Bottom Half) */}
+       <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-[#795548]/10 rounded-xl border-t-2 border-[#795548]/20 z-0 flex items-center justify-center overflow-hidden">
+            {/* Soil texture dots */}
+            <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#5d4037 1px, transparent 1px)', backgroundSize: '4px 4px' }}></div>
+            {/* Gradient for depth */}
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[#5d4037]/10"></div>
        </div>
 
-       {/* Scale Labels */}
-       <div className="flex flex-col justify-between py-1 text-[9px] font-bold text-slate-400 uppercase font-mono h-full">
-          <span className="leading-none text-slate-300 translate-y-[-2px]">30</span>
-          
-          <div className="flex items-center gap-1 text-emerald-600">
-             <div className="w-1.5 h-[1.5px] bg-emerald-500"></div>
-             <span>Soil</span>
-          </div>
+       {/* Paddy Plants (At Soil Surface) */}
+       <div className="absolute bottom-[calc(50%-2px)] w-full flex justify-between px-1 z-10 pointer-events-none">
+           {/* Left Plant Cluster */}
+           <svg width="28" height="42" viewBox="0 0 28 42" className="text-emerald-600 drop-shadow-sm origin-bottom">
+               <path d="M14 42 Q 4 22 0 5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+               <path d="M14 42 Q 20 28 26 8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+               <path d="M16 42 Q 16 22 14 2" stroke="#15803d" strokeWidth="2" fill="none" strokeLinecap="round" />
+           </svg>
+           {/* Right Plant Cluster */}
+           <svg width="28" height="42" viewBox="0 0 28 42" className="text-emerald-600 drop-shadow-sm origin-bottom transform scale-x-[-1]">
+               <path d="M14 42 Q 4 22 0 5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+               <path d="M14 42 Q 20 28 26 8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+               <path d="M16 42 Q 16 22 14 2" stroke="#15803d" strokeWidth="2" fill="none" strokeLinecap="round" />
+           </svg>
+       </div>
 
-          <span className="leading-none text-slate-300 translate-y-[2px]">0</span>
+       {/* The Pipe */}
+       <div className="relative z-20 h-full w-8 bg-slate-50/80 rounded-full border border-slate-300 shadow-lg ring-1 ring-slate-100/50 flex flex-col overflow-hidden backdrop-blur-[1px]">
+           
+           {/* Water Fill */}
+           <div 
+                className="absolute bottom-0 left-0 right-0 bg-blue-500/80 transition-all duration-1000 ease-out"
+                style={{ height: `${percent}%` }}
+           >
+                {/* Surface Reflection Line */}
+                <div className="absolute top-0 w-full h-[1px] bg-white/70 shadow-[0_0_8px_rgba(255,255,255,0.8)]"></div>
+                {/* Body Highlight */}
+                <div className="absolute top-0 left-1 right-1 h-full bg-gradient-to-r from-white/20 to-transparent"></div>
+           </div>
+
+           {/* Perforations Overlay (Bottom Half) */}
+           <div className="absolute bottom-0 left-0 right-0 h-1/2 flex flex-col justify-evenly py-2 items-center pointer-events-none opacity-40">
+                {[...Array(5)].map((_, i) => (
+                    <div key={i} className="flex gap-1.5">
+                        <div className="w-1 h-1 bg-slate-600 rounded-full"></div>
+                        <div className="w-1 h-1 bg-slate-600 rounded-full"></div>
+                    </div>
+                ))}
+           </div>
+       </div>
+
+       {/* Gauge Scale Labels */}
+       <div className="absolute -right-3 h-full flex flex-col justify-between py-2 text-[9px] font-bold text-slate-400 font-mono select-none">
+            <span>30</span>
+            <span className="text-[#5d4037] -ml-1">Soil</span>
+            <span>0</span>
        </div>
     </div>
   );

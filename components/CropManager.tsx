@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { Calendar, Save, Edit2, Sprout, Timer, AlertCircle, BookOpen, Bug, Droplets, Leaf, Scissors, Sun, CloudRain, Wind, Thermometer, Droplet, StickyNote, Smartphone } from 'lucide-react';
+import { Save, Edit2, Sprout, Timer, AlertCircle, BookOpen, Bug, Droplets, Leaf, Scissors, Sun, Wind, Thermometer, Droplet, StickyNote, Smartphone } from 'lucide-react';
 import { PaddyVisual } from './PaddyVisual';
 import { WeatherData } from '../services/weatherService';
 
 interface Props {
   sensorId: string;
   weather: WeatherData | null;
+  onSave?: () => void;
 }
 
 export interface CropConfig {
@@ -134,7 +135,7 @@ export const calculateStage = (cfg: CropConfig) => {
   return { days: Math.max(0, days), stageIndex, stageName, advice, phase, totalDuration, managementTips };
 };
 
-export const CropManager: React.FC<Props> = ({ sensorId, weather }) => {
+export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [config, setConfig] = useState<CropConfig | null>(null);
   const [notes, setNotes] = useState('');
@@ -164,6 +165,7 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather }) => {
     localStorage.setItem(`crop_${sensorId}`, JSON.stringify(newConfig));
     setConfig(newConfig);
     setIsEditing(false);
+    if (onSave) onSave();
   };
 
   const handleSaveNotes = () => {

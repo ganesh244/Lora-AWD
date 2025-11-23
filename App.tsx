@@ -39,6 +39,9 @@ function App() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(false);
+  
+  // Force update when crop config changes
+  const [configVersion, setConfigVersion] = useState(0);
 
   const getSavedNames = () => {
     try {
@@ -278,6 +281,8 @@ function App() {
 
   const getCropInfo = (id: string) => {
     try {
+        // Dependency on configVersion ensures re-calculation when state changes
+        const _v = configVersion; 
         const saved = localStorage.getItem(`crop_${id}`);
         if (saved) {
             return calculateStage(JSON.parse(saved));
@@ -613,7 +618,11 @@ function App() {
 
               {/* Crop Management Card */}
               <div className="lg:col-span-1">
-                 <CropManager sensorId={selectedSensor.id} weather={weather} />
+                 <CropManager 
+                    sensorId={selectedSensor.id} 
+                    weather={weather} 
+                    onSave={() => setConfigVersion(v => v + 1)} 
+                 />
               </div>
             </div>
 
