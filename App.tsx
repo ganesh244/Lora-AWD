@@ -12,6 +12,7 @@ import { CropManager, calculateStage } from './components/CropManager';
 import { AWDGauge } from './components/AWDGauge';
 import { PaddyVisual } from './components/PaddyVisual';
 import { fetchLocalWeather, getUserLocation, WeatherData } from './services/weatherService';
+import { storageService } from './services/storageService';
 import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, Move, Save, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff } from 'lucide-react';
 
 function App() {
@@ -101,7 +102,7 @@ function App() {
       // If we got valid sensor data, treat as success
       if (data.sensors.length > 0) {
         // Update Cache
-        localStorage.setItem('sensor_cache', JSON.stringify({
+        storageService.setItem('sensor_cache', JSON.stringify({
           timestamp: Date.now(),
           data
         }));
@@ -146,7 +147,16 @@ function App() {
 
   // Initial Load
   useEffect(() => {
-    loadData();
+    // Sync with server first
+    storageService.syncWithServer().then(() => {
+      loadData();
+      // Refresh weather if location was synced
+      const saved = localStorage.getItem('fieldLocation');
+      if (saved) {
+        const { lat, lon, name } = JSON.parse(saved);
+        fetchAndSetWeather(lat, lon, false, name);
+      }
+    });
     const interval = setInterval(loadData, 60000);
     return () => clearInterval(interval);
   }, []);
@@ -181,7 +191,7 @@ function App() {
       setWeather(weatherDataWithCorrectName);
 
       if (save || overrideName) {
-        localStorage.setItem('fieldLocation', JSON.stringify({
+        storageService.setItem('fieldLocation', JSON.stringify({
           lat,
           lon,
           name: finalName
@@ -225,7 +235,7 @@ function App() {
     const saved = localStorage.getItem('fieldLocation');
     if (saved) {
       const data = JSON.parse(saved);
-      localStorage.setItem('fieldLocation', JSON.stringify({ ...data, name: newName }));
+      storageService.setItem('fieldLocation', JSON.stringify({ ...data, name: newName }));
     }
   };
 
@@ -239,7 +249,7 @@ function App() {
     setSensors(newSensors);
 
     const orderIds = newSensors.map(s => s.id);
-    localStorage.setItem('sensorOrder', JSON.stringify(orderIds));
+    storageService.setItem('sensorOrder', JSON.stringify(orderIds));
   };
 
   // Renaming Handlers
@@ -257,7 +267,7 @@ function App() {
     } else {
       saved[id] = tempName.trim();
     }
-    localStorage.setItem('sensor_custom_names', JSON.stringify(saved));
+    storageService.setItem('sensor_custom_names', JSON.stringify(saved));
     setEditingNameId(null);
     loadData(); // Reload to apply changes
   };
