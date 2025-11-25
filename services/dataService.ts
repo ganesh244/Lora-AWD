@@ -7,7 +7,11 @@ const DATA_SOURCES = [
   'https://script.google.com/macros/s/AKfycbwMl7VGQlu4--r5DjptzE8JF5XXDoRIWSnYJ-0qCuYBEQnLbaBvXHzBNmuQcgjiynnf/exec',
 
   // 2. Standalone GSM Device Sheet
-  'https://script.google.com/macros/s/AKfycby61hthQVULKFW_1--hI0V2t-gjxOVSnUzZ6iHK-Q-RT2cpUbvgvmM7BfFt5rSOuR0MFw/exec'
+  'https://script.google.com/macros/s/AKfycby61hthQVULKFW_1--hI0V2t-gjxOVSnUzZ6iHK-Q-RT2cpUbvgvmM7BfFt5rSOuR0MFw/exec',
+
+  // 3. Standalone WiFi Device Sheet
+  // We append ?action=readAll to ensure we get the array of history
+  'https://script.google.com/macros/s/AKfycbyUep63cVY28X9M-P-1ypTfXILhTCb9h0_YJkqQkiwoNlkhgOavrj2qlESiXge8OPEA0w/exec?action=readAll'
 ];
 // --------------------------
 
@@ -104,7 +108,9 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
     // Fetch from all sources in parallel
     const fetchPromises = activeSources.map(async (url) => {
         try {
-            const response = await fetch(`${url}?nocache=${Date.now()}`, {
+            // Check if URL already has query params to append nocache correctly
+            const separator = url.includes('?') ? '&' : '?';
+            const response = await fetch(`${url}${separator}nocache=${Date.now()}`, {
                 method: 'GET',
                 credentials: 'omit',
                 redirect: 'follow'
@@ -124,6 +130,8 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
             if (Array.isArray(data)) return data;
             if (data && typeof data === 'object') {
                 if (data.data && Array.isArray(data.data)) return data.data;
+                // Handle single object return (fallback, though readAll should return array)
+                if (data.timestamp || data.waterLevel) return [data]; 
                 return [];
             }
             return [];
@@ -140,23 +148,48 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
     results.forEach(rows => {
         if (Array.isArray(rows)) {
             const normalized = rows.map((r: any) => {
-                // Detect if this is the new GSM format (camelCase keys)
-                if (r.waterLevel !== undefined || r.timestamp !== undefined) {
-                     return {
+                // Detect Data Type based on available fields (camelCase keys from standalone devices)
+                
+                // 1. GSM Device (Has gsmStrength, usually CSQ)
+                if (r.gsmStrength !== undefined || (r.network && r.network.toLowerCase().includes('gsm'))) {
+                    return {
                         "Gateway Received Time": r.timestamp,
-                        "Device ID": r.device || "GSM-Device",
+                        "Device ID": r.device || "Standalone GSM",
                         "Transmitter Data": r.dataType || "Direct",
                         "Water Level (cm)": Number(r.waterLevel || 0),
                         "Status": r.status || "Unknown",
-                        "Network": r.network || "GSM",
-                        "Batch Upload Time": r.timestamp, // Direct upload usually implies realtime
+                        "Network": "GSM",
+                        "Batch Upload Time": r.timestamp,
                         "SIM Operator": r.simOperator || "-",
-                        "WiFi Strength (dBm)": r.wifiStrength || 0,
-                        "GSM Strength (RSSI)": r.gsmStrength || 0,
+                        "WiFi Strength (dBm)": 0,
+                        "GSM Strength (RSSI)": r.gsmStrength || 0, // CSQ
+                        "SD Free (MB)": r.sdRemaining || 0
+                    } as SheetRow;
+                }
+
+                // 2. WiFi Device (Has wifiStrength, usually 0-10 scale)
+                if (r.wifiStrength !== undefined || (r.network && r.network.toLowerCase().includes('wifi'))) {
+                     // Normalize WiFi Signal: Arduino sends 0-10, we need dBm (-90 to -30)
+                     const rawWifi = Number(r.wifiStrength || 0);
+                     // If raw is small (0-10), convert. If already negative (dBm), keep it.
+                     const wifiDbm = rawWifi > 0 && rawWifi <= 10 ? (rawWifi * 6) - 90 : (rawWifi < 0 ? rawWifi : -95);
+
+                     return {
+                        "Gateway Received Time": r.timestamp,
+                        "Device ID": r.device || "Standalone WiFi",
+                        "Transmitter Data": r.dataType || "Direct",
+                        "Water Level (cm)": Number(r.waterLevel || 0),
+                        "Status": r.status || "Unknown",
+                        "Network": "WiFi",
+                        "Batch Upload Time": r.timestamp,
+                        "SIM Operator": "-",
+                        "WiFi Strength (dBm)": wifiDbm,
+                        "GSM Strength (RSSI)": 0,
                         "SD Free (MB)": r.sdRemaining || 0
                      } as SheetRow;
                 }
-                // Assume standard LoRa SheetRow format
+                
+                // 3. LoRa Gateway (Standard keys)
                 return r as SheetRow;
             });
             allRows = [...allRows, ...normalized];
@@ -246,7 +279,9 @@ export const mapDeviceNickname = (id: string): string => {
   if (lowerId.includes("lora5")) return "Plot 5";
   
   // GSM / Standalone Device Mappings
-  if (lowerId.includes("gsm") || lowerId.includes("standalone") || lowerId.includes("sa_") || lowerId.includes("esp32")) return "Standalone Field";
+  if (lowerId.includes("wifi")) return "Standalone WiFi";
+  if (lowerId.includes("gsm")) return "Standalone GSM";
+  if (lowerId.includes("standalone") || lowerId.includes("sa_") || lowerId.includes("esp32")) return "Standalone Field";
   
   return id;
 };

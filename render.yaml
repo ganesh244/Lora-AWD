@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: lora-water-monitor
-    env: node
-    buildCommand: npm install && npm run build
-    startCommand: node server/index.js
-    envVars:
-      - key: MONGO_URI
-        sync: false
