@@ -1,5 +1,5 @@
 {
-  "name": "LoRa Water Monitor",
+  "name": "SMART PADDY - FIELD MONITOR",
   "description": "Real-time dashboard for LoRaWAN Water Level Gateway connected via Google Sheets.",
   "requestFramePermissions": [
     "geolocation"

@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { fetchSensorData, parseDate, formatDateTime, mapDeviceNickname } from './services/dataService';
+import { fetchSensorData, parseDate, formatDateTime, mapDeviceNickname, fetchCloudSettings, saveCloudSetting } from './services/dataService';
 import { SensorData, GatewayStatus, SheetRow } from './types';
 import { StatusBadge } from './components/StatusBadge';
 import { SystemHealth } from './components/SystemHealth';
@@ -11,23 +11,39 @@ import { WeatherDashboard } from './components/WeatherDashboard';
 import { CropManager, calculateStage } from './components/CropManager';
 import { AWDGauge } from './components/AWDGauge';
 import { PaddyVisual } from './components/PaddyVisual';
+import { AlertsDashboard } from './components/AlertsDashboard';
+import { SettingsDashboard } from './components/SettingsDashboard';
 import { fetchLocalWeather, getUserLocation, WeatherData } from './services/weatherService';
-import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, Move, Save, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff, Wifi } from 'lucide-react';
+import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, Move, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff, Wifi, Bell, Grab, Settings } from 'lucide-react';
+import { LanguageProvider, useTranslation } from './services/translations';
+
+// Wrapper to provide Language Context
+export default function AppWrapper() {
+  return (
+    <LanguageProvider>
+      <App />
+    </LanguageProvider>
+  );
+}
 
 function App() {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  
   const [sensors, setSensors] = useState<SensorData[]>([]);
   const [gateway, setGateway] = useState<GatewayStatus | null>(null);
   const [logs, setLogs] = useState<SheetRow[]>([]);
-
+  
   const [selectedSensor, setSelectedSensor] = useState<SensorData | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'weather'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'weather' | 'alerts' | 'settings'>('dashboard');
   const [isRearranging, setIsRearranging] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
-
+  
+  // Drag and Drop State
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  
   // Renaming State
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [tempName, setTempName] = useState('');
@@ -39,98 +55,121 @@ function App() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(false);
-
+  
   // Force update when crop config changes
-  const [, setConfigVersion] = useState(0);
+  const [configVersion, setConfigVersion] = useState(0);
+
+  // --- Cloud Sync State ---
+  const [cloudSettings, setCloudSettings] = useState<any>({});
 
   const getSavedNames = () => {
     try {
+      if (cloudSettings && Object.keys(cloudSettings).length > 0) {
+         const names: Record<string, string> = {};
+         Object.keys(cloudSettings).forEach(deviceId => {
+             if (cloudSettings[deviceId].name) names[deviceId] = cloudSettings[deviceId].name;
+         });
+         return names;
+      }
       const saved = localStorage.getItem('sensor_custom_names');
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
   };
 
   const processAndSetData = (data: { sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }) => {
-    // 1. Apply Custom Names
-    const savedNames = getSavedNames();
-    const sensorsWithNames = data.sensors.map(s => ({
-      ...s,
-      name: savedNames[s.id] || s.name
-    }));
+      const savedNames = getSavedNames();
+      const sensorsWithNames = data.sensors.map(s => ({
+          ...s,
+          name: savedNames[s.id] || s.name
+      }));
 
-    // 2. Apply saved order
-    const savedOrderJson = localStorage.getItem('sensorOrder');
-    let sortedSensors = sensorsWithNames;
+      const savedOrderJson = localStorage.getItem('sensorOrder');
+      let sortedSensors = sensorsWithNames;
+      
+      if (savedOrderJson) {
+        try {
+          const orderList = JSON.parse(savedOrderJson);
+          if (Array.isArray(orderList)) {
+            sortedSensors.sort((a, b) => {
+              let idxA = orderList.indexOf(a.id);
+              let idxB = orderList.indexOf(b.id);
+              if (idxA === -1) idxA = 9999;
+              if (idxB === -1) idxB = 9999;
+              return idxA - idxB;
+            });
+          }
+        } catch (e) { console.error("Failed to parse sensor order", e); }
+      }
 
-    if (savedOrderJson) {
-      try {
-        const orderList = JSON.parse(savedOrderJson);
-        if (Array.isArray(orderList)) {
-          sortedSensors.sort((a, b) => {
-            let idxA = orderList.indexOf(a.id);
-            let idxB = orderList.indexOf(b.id);
-            if (idxA === -1) idxA = 9999;
-            if (idxB === -1) idxB = 9999;
-            return idxA - idxB;
-          });
-        }
-      } catch (e) { console.error("Failed to parse sensor order", e); }
-    }
+      setSensors(sortedSensors);
+      setGateway(data.gateway);
+      setLogs(data.logs);
 
-    setSensors(sortedSensors);
-    setGateway(data.gateway);
-    setLogs(data.logs);
-
-    // Preserve selection with updated data
-    if (selectedSensor) {
-      const updated = sortedSensors.find(s => s.id === selectedSensor.id);
-      if (updated) setSelectedSensor(updated);
-    }
+      if (selectedSensor) {
+        const updated = sortedSensors.find(s => s.id === selectedSensor.id);
+        if (updated) setSelectedSensor(updated);
+      }
   };
 
   const loadData = async () => {
-    if (!isRearranging) setLoading(true);
+    if (!isRearranging) setLoading(true); 
     setError(null);
-
+    
     try {
+      fetchCloudSettings().then(settings => {
+          if (settings) {
+              setCloudSettings(settings);
+              localStorage.setItem('cloud_settings_cache', JSON.stringify(settings));
+              Object.keys(settings).forEach(devId => {
+                  if (settings[devId].cropConfig) {
+                      localStorage.setItem(`crop_${devId}`, JSON.stringify(settings[devId].cropConfig));
+                  }
+                  if (settings[devId].notes) {
+                      localStorage.setItem(`notes_${devId}`, settings[devId].notes);
+                  }
+              });
+              setConfigVersion(v => v + 1);
+          }
+      });
+
       const data = await fetchSensorData();
-
+      
       if (data.sensors.length > 0) {
-        localStorage.setItem('sensor_cache', JSON.stringify({
-          timestamp: Date.now(),
-          data
-        }));
+          localStorage.setItem('sensor_cache', JSON.stringify({
+              timestamp: Date.now(),
+              data
+          }));
 
-        processAndSetData(data);
-        setLastRefreshed(new Date());
-        setUsingCache(false);
+          processAndSetData(data);
+          setLastRefreshed(new Date());
+          setUsingCache(false); 
       } else {
-        throw new Error("No data received from gateway");
+          throw new Error("No data received from gateway");
       }
 
     } catch (err: any) {
       console.warn("Fetch failed, attempting to load from cache", err);
-
+      
       const cached = localStorage.getItem('sensor_cache');
       if (cached) {
-        try {
-          const { timestamp, data } = JSON.parse(cached);
-          processAndSetData(data);
-          setLastRefreshed(new Date(timestamp));
-          setUsingCache(true);
-          setError(null);
-        } catch (cacheErr) {
-          console.error("Cache corrupted", cacheErr);
-          setUsingCache(false);
-          const message = err.message || "Connection failed and cache is unavailable.";
-          setError(message);
-        }
+          try {
+              const { timestamp, data } = JSON.parse(cached);
+              processAndSetData(data);
+              setLastRefreshed(new Date(timestamp));
+              setUsingCache(true);
+              setError(null);
+          } catch (cacheErr) {
+              console.error("Cache corrupted", cacheErr);
+              setUsingCache(false);
+              const message = err.message || "Connection failed and cache is unavailable.";
+              setError(message);
+          }
       } else {
-        setUsingCache(false);
-        const message = err.message && err.message.length > 0 && err.message !== "Failed to fetch"
-          ? err.message
-          : "Connection failed. Please ensure your Google Sheet is active and accessible.";
-        setError(message);
+          setUsingCache(false);
+          const message = err.message && err.message.length > 0 && err.message !== "Failed to fetch" 
+            ? err.message 
+            : "Connection failed. Please ensure your Google Sheet is active and accessible.";
+          setError(message);
       }
     } finally {
       setLoading(false);
@@ -146,91 +185,109 @@ function App() {
   useEffect(() => {
     const saved = localStorage.getItem('fieldLocation');
     if (saved) {
-      const { lat, lon, name } = JSON.parse(saved);
-      fetchAndSetWeather(lat, lon, false, name);
+        const { lat, lon, name } = JSON.parse(saved);
+        fetchAndSetWeather(lat, lon, false, name);
     }
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+        handleRefreshWeather();
+    }, 15 * 60 * 1000); 
+    return () => clearInterval(interval);
   }, []);
 
   const fetchAndSetWeather = async (lat: number, lon: number, save: boolean, overrideName?: string) => {
     setWeatherLoading(true);
     setWeatherError(false);
     try {
-      const data = await fetchLocalWeather(lat, lon);
-      let finalName = data.locationName || "Local Field";
-
-      if (overrideName) {
-        finalName = overrideName;
-      } else if (!save) {
-        const saved = localStorage.getItem('fieldLocation');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.name) finalName = parsed.name;
+        const data = await fetchLocalWeather(lat, lon);
+        let finalName = data.locationName || "Local Field";
+        if (overrideName) {
+            finalName = overrideName;
+        } else if (!save) {
+            const saved = localStorage.getItem('fieldLocation');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed.name) finalName = parsed.name;
+            }
         }
-      }
-
-      const weatherDataWithCorrectName = { ...data, locationName: finalName };
-      setWeather(weatherDataWithCorrectName);
-
-      if (save || overrideName) {
-        localStorage.setItem('fieldLocation', JSON.stringify({
-          lat,
-          lon,
-          name: finalName
-        }));
-      }
+        const weatherDataWithCorrectName = { ...data, locationName: finalName };
+        setWeather(weatherDataWithCorrectName);
+        if (save || overrideName) {
+            localStorage.setItem('fieldLocation', JSON.stringify({ lat, lon, name: finalName }));
+        }
     } catch (e) {
-      console.error("Weather Fetch Error", e);
-      setWeatherError(true);
+        console.error("Weather Fetch Error", e);
+        setWeatherError(true);
     } finally {
-      setWeatherLoading(false);
+        setWeatherLoading(false);
     }
   };
 
   const handleUpdateLocation = async () => {
     try {
-      setWeatherLoading(true);
-      setWeatherError(false);
-      const loc = await getUserLocation();
-      await fetchAndSetWeather(loc.lat, loc.lon, true);
+        setWeatherLoading(true);
+        setWeatherError(false);
+        const loc = await getUserLocation();
+        await fetchAndSetWeather(loc.lat, loc.lon, true);
     } catch (e) {
-      console.error("GPS Error", e);
-      setWeatherError(true);
-      setWeatherLoading(false);
+        console.error("GPS Error", e);
+        setWeatherError(true);
+        setWeatherLoading(false);
     }
   };
 
   const handleRefreshWeather = async () => {
     const saved = localStorage.getItem('fieldLocation');
     if (saved) {
-      const { lat, lon, name } = JSON.parse(saved);
-      await fetchAndSetWeather(lat, lon, false, name);
+        const { lat, lon, name } = JSON.parse(saved);
+        await fetchAndSetWeather(lat, lon, false, name);
     } else {
-      handleUpdateLocation();
+        handleUpdateLocation();
     }
   };
 
   const handleLocationNameChange = (newName: string) => {
-    if (!weather) return;
-    const updated = { ...weather, locationName: newName };
-    setWeather(updated);
-    const saved = localStorage.getItem('fieldLocation');
-    if (saved) {
-      const data = JSON.parse(saved);
-      localStorage.setItem('fieldLocation', JSON.stringify({ ...data, name: newName }));
-    }
+     if (!weather) return;
+     const updated = { ...weather, locationName: newName };
+     setWeather(updated);
+     const saved = localStorage.getItem('fieldLocation');
+     if (saved) {
+         const data = JSON.parse(saved);
+         localStorage.setItem('fieldLocation', JSON.stringify({ ...data, name: newName }));
+     }
   };
 
-  const moveSensor = (e: React.MouseEvent, index: number, direction: -1 | 1) => {
-    e.stopPropagation();
-    if (index + direction < 0 || index + direction >= sensors.length) return;
+  // --- Drag and Drop Logic ---
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+      setDraggedId(id);
+      e.dataTransfer.effectAllowed = "move";
+  };
 
-    const newSensors = [...sensors];
-    [newSensors[index], newSensors[index + direction]] = [newSensors[index + direction], newSensors[index]];
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+  };
 
-    setSensors(newSensors);
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+      e.preventDefault();
+      if (!draggedId || draggedId === targetId) return;
 
-    const orderIds = newSensors.map(s => s.id);
-    localStorage.setItem('sensorOrder', JSON.stringify(orderIds));
+      const sourceIndex = sensors.findIndex(s => s.id === draggedId);
+      const targetIndex = sensors.findIndex(s => s.id === targetId);
+
+      if (sourceIndex === -1 || targetIndex === -1) return;
+
+      const newSensors = [...sensors];
+      const [movedItem] = newSensors.splice(sourceIndex, 1);
+      newSensors.splice(targetIndex, 0, movedItem);
+
+      setSensors(newSensors);
+      
+      const orderIds = newSensors.map(s => s.id);
+      localStorage.setItem('sensorOrder', JSON.stringify(orderIds));
+      setDraggedId(null);
   };
 
   const handleEditName = (e: React.MouseEvent, sensor: SensorData) => {
@@ -239,38 +296,32 @@ function App() {
     setTempName(sensor.name);
   };
 
-  const handleSaveName = (e: React.SyntheticEvent, id: string) => {
+  const handleSaveName = async (e: React.SyntheticEvent, id: string) => {
     e.stopPropagation();
     const newName = tempName.trim();
+    await saveCloudSetting(id, 'name', newName);
     const saved = getSavedNames();
-
-    // Update LocalStorage
-    if (!newName) {
-      delete saved[id];
-    } else {
-      saved[id] = newName;
-    }
+    if (!newName) delete saved[id];
+    else saved[id] = newName;
     localStorage.setItem('sensor_custom_names', JSON.stringify(saved));
+    setCloudSettings((prev: any) => ({ ...prev, [id]: { ...prev[id], name: newName } }));
     setEditingNameId(null);
-
-    // Optimistically update the UI state immediately
     const finalName = newName || mapDeviceNickname(id);
-
-    setSensors(prev => prev.map(s => {
-      if (s.id === id) {
-        return { ...s, name: finalName };
-      }
-      return s;
-    }));
-
-    if (selectedSensor && selectedSensor.id === id) {
-      setSelectedSensor(prev => prev ? { ...prev, name: finalName } : null);
-    }
+    setSensors(prev => prev.map(s => s.id === id ? { ...s, name: finalName } : s));
+    if (selectedSensor && selectedSensor.id === id) setSelectedSensor(prev => prev ? { ...prev, name: finalName } : null);
   };
 
   const handleCancelEdit = (e: React.SyntheticEvent) => {
     e.stopPropagation();
     setEditingNameId(null);
+  };
+
+  const handleNavigateFromAlert = (sensorId: string) => {
+      const sensor = sensors.find(s => s.id === sensorId);
+      if (sensor) {
+          setSelectedSensor(sensor);
+          setActiveTab('dashboard');
+      }
   };
 
   const getTimeAgo = (dateStr: string) => {
@@ -289,207 +340,203 @@ function App() {
 
   const getCropInfo = (id: string) => {
     try {
-
-      const saved = localStorage.getItem(`crop_${id}`);
-      if (saved) {
-        return calculateStage(JSON.parse(saved));
-      }
+        if (cloudSettings[id] && cloudSettings[id].cropConfig) {
+             return calculateStage(cloudSettings[id].cropConfig);
+        }
+        const saved = localStorage.getItem(`crop_${id}`);
+        if (saved) {
+            return calculateStage(JSON.parse(saved));
+        }
     } catch (e) { return null; }
     return null;
   };
 
   const getPhaseGradient = (phase: string) => {
-    switch (phase) {
-      case 'Reproductive': return 'from-teal-400 to-teal-600';
-      case 'Ripening': return 'from-amber-400 to-amber-600';
-      case 'Finished': return 'from-orange-400 to-orange-600';
-      case 'Vegetative':
-      default: return 'from-emerald-400 to-emerald-600';
-    }
+      switch (phase) {
+          case 'Reproductive': return 'from-teal-400 to-teal-600';
+          case 'Ripening': return 'from-amber-400 to-amber-600';
+          case 'Finished': return 'from-orange-400 to-orange-600';
+          case 'Vegetative':
+          default: return 'from-emerald-400 to-emerald-600';
+      }
   };
 
-  // Helper to check device type based on metadata
   const isDeviceType = (sensor: SensorData, type: 'lora' | 'gsm' | 'wifi'): boolean => {
-    const net = sensor.raw.Network?.toLowerCase() || '';
-    const id = sensor.id.toLowerCase();
-
-    const isLora = id.includes('lora');
-
-    // STRICT Filtering Logic
-    if (type === 'lora') return isLora;
-
-    // If it IS LoRa, exclude it from other filters immediately
-    if (isLora) return false;
-
-    // Standalone WiFi
-    if (type === 'wifi') return net.includes('wifi') || id.includes('wifi');
-
-    // Standalone GSM: Must NOT be WiFi and NOT be LoRa
-    if (type === 'gsm') {
-      if (net.includes('wifi') || id.includes('wifi')) return false;
-      // Catch-all for remaining standalone cellular devices
-      return true;
-    }
-    return false;
-  };
-
-  // Filter sensors based on selection
-  const filteredSensors = useMemo(() => {
-    if (dashboardFilter === 'all') return sensors;
-    return sensors.filter(s => isDeviceType(s, dashboardFilter));
-  }, [sensors, dashboardFilter]);
-
-  // Filter logs based on current dashboard filter
-  const filteredLogs = useMemo(() => {
-    if (dashboardFilter === 'all') return logs;
-
-    // Helper for logs (mirroring sensor logic)
-    const isLogType = (row: SheetRow, type: 'lora' | 'gsm' | 'wifi') => {
-      const net = row.Network?.toLowerCase() || '';
-      const id = row["Device ID"]?.toLowerCase() || '';
-
+      const net = sensor.raw.Network?.toLowerCase() || '';
+      const id = sensor.id.toLowerCase();
       const isLora = id.includes('lora');
-
       if (type === 'lora') return isLora;
       if (isLora) return false;
-
       if (type === 'wifi') return net.includes('wifi') || id.includes('wifi');
-
       if (type === 'gsm') {
-        if (net.includes('wifi') || id.includes('wifi')) return false;
-        return true;
+          if (net.includes('wifi') || id.includes('wifi')) return false;
+          return true; 
       }
       return false;
-    };
+  };
 
-    return logs.filter(l => isLogType(l, dashboardFilter));
+  const filteredSensors = useMemo(() => {
+      if (dashboardFilter === 'all') return sensors;
+      return sensors.filter(s => isDeviceType(s, dashboardFilter));
+  }, [sensors, dashboardFilter]);
+
+  const filteredLogs = useMemo(() => {
+      if (dashboardFilter === 'all') return logs;
+      const isLogType = (row: SheetRow, type: 'lora' | 'gsm' | 'wifi') => {
+          const net = row.Network?.toLowerCase() || '';
+          const id = row["Device ID"]?.toLowerCase() || '';
+          const isLora = id.includes('lora');
+          if (type === 'lora') return isLora;
+          if (isLora) return false;
+          if (type === 'wifi') return net.includes('wifi') || id.includes('wifi');
+          if (type === 'gsm') {
+              if (net.includes('wifi') || id.includes('wifi')) return false;
+              return true;
+          }
+          return false;
+      };
+      return logs.filter(l => isLogType(l, dashboardFilter));
   }, [logs, dashboardFilter]);
 
   const activeGateway = useMemo(() => {
-    if (filteredLogs.length > 0) {
-      const latest = filteredLogs[0];
-      return {
-        network: latest["Network"] || "Unknown",
-        simOperator: latest["SIM Operator"] || "-",
-        wifiSignal: String(latest["WiFi Strength (dBm)"] || "0"),
-        gsmSignal: String(latest["GSM Strength (RSSI)"] || "0"),
-        sdFree: String(latest["SD Free (MB)"] || "0"),
-        lastBatchUpload: latest["Batch Upload Time"] || latest["Gateway Received Time"] || "N/A",
-        source: latest["Device ID"]
-      } as GatewayStatus;
-    }
-    return gateway;
+      if (filteredLogs.length > 0) {
+          const latest = filteredLogs[0];
+          return {
+              network: latest["Network"] || "Unknown",
+              simOperator: latest["SIM Operator"] || "-",
+              wifiSignal: String(latest["WiFi Strength (dBm)"] || "0"),
+              gsmSignal: String(latest["GSM Strength (RSSI)"] || "0"),
+              sdFree: String(latest["SD Free (MB)"] || "0"),
+              lastBatchUpload: latest["Batch Upload Time"] || latest["Gateway Received Time"] || "N/A",
+              source: latest["Device ID"]
+          } as GatewayStatus;
+      }
+      return gateway;
   }, [filteredLogs, gateway]);
 
   const hasMixedDevices = useMemo(() => {
-    const hasLora = sensors.some(s => isDeviceType(s, 'lora'));
-    const hasGsm = sensors.some(s => isDeviceType(s, 'gsm'));
-    const hasWifi = sensors.some(s => isDeviceType(s, 'wifi'));
-    return (Number(hasLora) + Number(hasGsm) + Number(hasWifi)) > 1;
+      const hasLora = sensors.some(s => isDeviceType(s, 'lora'));
+      const hasGsm = sensors.some(s => isDeviceType(s, 'gsm'));
+      const hasWifi = sensors.some(s => isDeviceType(s, 'wifi'));
+      return (Number(hasLora) + Number(hasGsm) + Number(hasWifi)) > 1;
   }, [sensors]);
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] text-slate-800 font-sans selection:bg-emerald-100">
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm backdrop-blur-xl bg-white/90">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm backdrop-blur-xl bg-white/90 print:hidden">
+         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center gap-3">
               <div className="bg-emerald-600 p-2 rounded-lg shadow-md shadow-emerald-600/20">
                 <Sprout className="h-5 w-5 text-white" />
               </div>
               <div>
-                <span className="font-bold text-lg text-slate-900 tracking-tight block leading-none">SmartPaddy</span>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Field Monitor</span>
+                <span className="font-bold text-lg text-slate-900 tracking-tight block leading-none">{t('app.title')}</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('app.subtitle')}</span>
               </div>
             </div>
-
+            
             <div className="hidden md:flex items-center space-x-1 mx-6 bg-slate-100/50 p-1 rounded-full border border-slate-200/50">
-              <button
-                onClick={() => { setActiveTab('dashboard'); setSelectedSensor(null); }}
-                className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'dashboard' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-              >
-                <LayoutDashboard size={16} /> Fields
-              </button>
-              <button
-                onClick={() => { setActiveTab('logs'); setSelectedSensor(null); }}
-                className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-              >
-                <FileText size={16} /> Logs
-              </button>
-              <button
-                onClick={() => { setActiveTab('weather'); setSelectedSensor(null); }}
-                className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'weather' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-              >
-                <CloudSun size={16} /> Weather
-              </button>
+                <button 
+                  onClick={() => { setActiveTab('dashboard'); setSelectedSensor(null); }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'dashboard' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                >
+                  <LayoutDashboard size={16} /> {t('nav.fields')}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('alerts'); setSelectedSensor(null); }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'alerts' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                >
+                  <Bell size={16} /> {t('nav.alerts')}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('logs'); setSelectedSensor(null); }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                >
+                  <FileText size={16} /> {t('nav.logs')}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('weather'); setSelectedSensor(null); }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'weather' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                >
+                  <CloudSun size={16} /> {t('nav.weather')}
+                </button>
             </div>
 
             <div className="flex items-center gap-4">
               {activeTab === 'dashboard' && !weather && (
-                <div className="hidden lg:flex items-center gap-3 mr-2">
-                  <button
-                    onClick={handleRefreshWeather}
-                    disabled={weatherLoading}
-                    className={`text-xs font-medium flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-colors ${weatherError ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-50 text-slate-500 border-slate-100 hover:bg-blue-50 hover:text-blue-600'}`}
-                  >
-                    {weatherLoading ? <RefreshCw size={12} className="animate-spin" /> : <MapPin size={12} />}
-                    {weatherError ? 'Retry Weather' : 'Local Weather'}
-                  </button>
-                </div>
+                  <div className="hidden lg:flex items-center gap-3 mr-2">
+                    <button 
+                        onClick={handleRefreshWeather}
+                        disabled={weatherLoading}
+                        className={`text-xs font-medium flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-colors ${weatherError ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-50 text-slate-500 border-slate-100 hover:bg-blue-50 hover:text-blue-600'}`}
+                    >
+                        {weatherLoading ? <RefreshCw size={12} className="animate-spin" /> : <MapPin size={12} />}
+                        {weatherError ? 'Retry' : t('weather.local')}
+                    </button>
+                  </div>
               )}
 
               <CurrentClock />
 
-              <div className="text-right hidden lg:block border-r border-slate-100 pr-4 mr-1">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Last Updated</span>
-                <span className="block text-xs font-mono font-semibold text-slate-700">{lastRefreshed.toLocaleTimeString()}</span>
+              <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => { setActiveTab('settings'); setSelectedSensor(null); }}
+                    className={`p-2 rounded-full border transition-all ${activeTab === 'settings' ? 'bg-slate-100 text-emerald-600 border-emerald-200' : 'bg-white text-slate-400 border-slate-100 hover:text-slate-600 hover:border-slate-300'}`}
+                    title={t('nav.settings')}
+                  >
+                    <Settings size={18} />
+                  </button>
+                  
+                  <button 
+                    onClick={loadData}
+                    className={`p-2 rounded-full hover:bg-slate-100 border border-slate-200 hover:border-slate-300 hover:text-emerald-600 transition-all ${loading ? 'animate-spin text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-slate-500'}`}
+                    title={t('btn.refresh')}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
               </div>
-
-              {activeTab === 'dashboard' && !selectedSensor && (
-                <button
-                  onClick={() => setIsRearranging(!isRearranging)}
-                  className={`p-2 rounded-full border transition-all ${isRearranging ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300 hover:text-emerald-600'}`}
-                  title={isRearranging ? "Done Rearranging" : "Arrange Plots"}
-                >
-                  {isRearranging ? <Save size={16} /> : <Move size={16} />}
-                </button>
-              )}
-
-              <button
-                onClick={loadData}
-                className={`p-2 rounded-full hover:bg-slate-100 border border-slate-200 hover:border-slate-300 hover:text-emerald-600 transition-all ${loading ? 'animate-spin text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-slate-500'}`}
-                title="Refresh Data"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </button>
             </div>
           </div>
         </div>
-
-        <div className="grid grid-cols-3 md:hidden border-t border-slate-100 bg-white">
-          <button
-            onClick={() => { setActiveTab('dashboard'); setSelectedSensor(null); }}
-            className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'dashboard' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
-          >
-            <LayoutDashboard size={14} /> Fields
-          </button>
-          <button
-            onClick={() => { setActiveTab('logs'); setSelectedSensor(null); }}
-            className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'logs' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
-          >
-            <FileText size={14} /> Logs
-          </button>
-          <button
-            onClick={() => { setActiveTab('weather'); setSelectedSensor(null); }}
-            className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'weather' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
-          >
-            <CloudSun size={14} /> Weather
-          </button>
+        
+        {/* Mobile Navbar */}
+        <div className="grid grid-cols-5 md:hidden border-t border-slate-100 bg-white">
+           <button 
+              onClick={() => { setActiveTab('dashboard'); setSelectedSensor(null); }}
+              className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'dashboard' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
+            >
+              <LayoutDashboard size={16} /> <span className="text-[10px]">{t('nav.fields')}</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('alerts'); setSelectedSensor(null); }}
+              className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'alerts' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
+            >
+              <Bell size={16} /> <span className="text-[10px]">{t('nav.alerts')}</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('logs'); setSelectedSensor(null); }}
+              className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'logs' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
+            >
+              <FileText size={16} /> <span className="text-[10px]">{t('nav.logs')}</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('weather'); setSelectedSensor(null); }}
+              className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'weather' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
+            >
+              <CloudSun size={16} /> <span className="text-[10px]">{t('nav.weather')}</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('settings'); setSelectedSensor(null); }}
+              className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'settings' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
+            >
+              <Settings size={16} /> <span className="text-[10px]">{t('nav.settings')}</span>
+            </button>
         </div>
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-
+        
         {error && !usingCache && (
           <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6 flex items-center gap-4 text-red-800 shadow-sm animate-in slide-in-from-top-2">
             <div className="bg-red-100 p-2 rounded-full shrink-0">
@@ -499,12 +546,7 @@ function App() {
               <p className="font-bold text-sm text-red-900">Sync Error</p>
               <p className="text-xs text-red-700 mt-0.5">{error}</p>
             </div>
-            <button
-              onClick={loadData}
-              className="px-4 py-2 bg-white border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-red-50 shadow-sm"
-            >
-              Retry
-            </button>
+            <button onClick={loadData} className="px-4 py-2 bg-white border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-red-50 shadow-sm">Retry</button>
           </div>
         )}
 
@@ -515,51 +557,55 @@ function App() {
             </div>
             <div className="flex-1">
               <p className="font-bold text-sm text-amber-900">Offline Mode</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                Displaying cached data from {lastRefreshed.toLocaleString()}. Live updates paused.
-              </p>
+              <p className="text-xs text-amber-700 mt-0.5">Displaying cached data from {lastRefreshed.toLocaleString()}. Live updates paused.</p>
             </div>
-            <button
-              onClick={loadData}
-              className="px-4 py-2 bg-white border border-amber-200 text-amber-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-amber-50 shadow-sm"
-            >
-              Retry
-            </button>
+            <button onClick={loadData} className="px-4 py-2 bg-white border border-amber-200 text-amber-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-amber-50 shadow-sm">Retry</button>
           </div>
         )}
 
         {activeTab === 'weather' ? (
-          <WeatherDashboard
-            weather={weather}
-            loading={weatherLoading}
-            error={weatherError}
-            onRefresh={handleRefreshWeather}
-            onUpdateLocation={handleUpdateLocation}
-            onLocationNameChange={handleLocationNameChange}
-          />
+            <WeatherDashboard 
+                weather={weather} 
+                loading={weatherLoading} 
+                error={weatherError} 
+                onRefresh={handleRefreshWeather}
+                onUpdateLocation={handleUpdateLocation}
+                onLocationNameChange={handleLocationNameChange}
+            />
+        ) : activeTab === 'alerts' ? (
+            <AlertsDashboard sensors={sensors} weather={weather} onNavigate={handleNavigateFromAlert} />
+        ) : activeTab === 'settings' ? (
+            <SettingsDashboard 
+                onClearCache={() => { localStorage.clear(); window.location.reload(); }} 
+                onSettingsChange={() => { loadData(); setConfigVersion(v => v + 1); }}
+                onEnterArrangeMode={() => {
+                    setActiveTab('dashboard');
+                    setIsRearranging(true);
+                }}
+            />
         ) : loading && sensors.length === 0 ? (
-          <div className="flex flex-col justify-center items-center h-96 animate-in fade-in">
-            <div className="relative mb-8">
-              <div className="absolute inset-0 rounded-full bg-emerald-400 opacity-20 animate-ping"></div>
-              <div className="relative rounded-full bg-white p-4 shadow-xl border border-emerald-100">
-                <RefreshCw className="h-8 w-8 text-emerald-600 animate-spin" />
-              </div>
-            </div>
-            <p className="text-slate-900 font-semibold text-lg">Connecting to Paddy Fields</p>
-            <p className="text-slate-500 text-sm mt-2">Fetching water levels...</p>
-          </div>
+           <div className="flex flex-col justify-center items-center h-96 animate-in fade-in">
+             <div className="relative mb-8">
+               <div className="absolute inset-0 rounded-full bg-emerald-400 opacity-20 animate-ping"></div>
+               <div className="relative rounded-full bg-white p-4 shadow-xl border border-emerald-100">
+                 <RefreshCw className="h-8 w-8 text-emerald-600 animate-spin" />
+               </div>
+             </div>
+             <p className="text-slate-900 font-semibold text-lg">Connecting to Paddy Fields</p>
+             <p className="text-slate-500 text-sm mt-2">Fetching water levels...</p>
+           </div>
         ) : activeTab === 'logs' ? (
-          <div className="animate-in fade-in duration-300">
-            <DataLogs logs={filteredLogs} error={error} />
-          </div>
+           <div className="animate-in fade-in duration-300">
+             <DataLogs logs={filteredLogs} error={error} />
+           </div>
         ) : selectedSensor ? (
           <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-            <button
+            <button 
               onClick={() => setSelectedSensor(null)}
               className="group flex items-center text-sm text-slate-500 hover:text-emerald-600 mb-6 transition-colors font-medium"
             >
               <div className="p-1.5 rounded-lg bg-white border border-slate-200 group-hover:border-emerald-300 mr-2 shadow-sm transition-all">
-                <ArrowLeft className="h-4 w-4" />
+                 <ArrowLeft className="h-4 w-4" />
               </div>
               Back to Overview
             </button>
@@ -570,107 +616,97 @@ function App() {
                   <div>
                     <div className="flex items-center gap-3 mb-2 min-h-[44px]">
                       {editingNameId === selectedSensor.id ? (
-                        <div className="flex items-center gap-2 w-full max-w-md animate-in fade-in" onClick={e => e.stopPropagation()}>
-                          <input
-                            type="text"
-                            value={tempName}
-                            onChange={e => setTempName(e.target.value)}
-                            className="text-2xl font-bold text-slate-900 border-b-2 border-emerald-500 focus:outline-none bg-white/50 w-full px-1"
-                            autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveName(e, selectedSensor.id);
-                              if (e.key === 'Escape') handleCancelEdit(e);
-                            }}
-                            onClick={e => e.stopPropagation()}
-                          />
-                          <button onClick={(e) => handleSaveName(e, selectedSensor.id)} className="p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 shrink-0"><Check size={20} /></button>
-                          <button onClick={(e) => handleCancelEdit(e)} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 shrink-0"><X size={20} /></button>
-                        </div>
+                          <div className="flex items-center gap-2 w-full max-w-md animate-in fade-in" onClick={e => e.stopPropagation()}>
+                              <input 
+                                  type="text" 
+                                  value={tempName}
+                                  onChange={e => setTempName(e.target.value)}
+                                  className="text-2xl font-bold text-slate-900 border-b-2 border-emerald-500 focus:outline-none bg-white/50 w-full px-1"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                      if(e.key === 'Enter') handleSaveName(e, selectedSensor.id);
+                                      if(e.key === 'Escape') handleCancelEdit(e);
+                                  }}
+                                  onClick={e => e.stopPropagation()}
+                              />
+                              <button onClick={(e) => handleSaveName(e, selectedSensor.id)} className="p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 shrink-0"><Check size={20}/></button>
+                              <button onClick={(e) => handleCancelEdit(e)} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 shrink-0"><X size={20}/></button>
+                          </div>
                       ) : (
-                        <div className="flex items-center gap-3 group/title">
-                          <h2 className="text-3xl font-bold text-slate-900 tracking-tight cursor-pointer hover:text-emerald-700 transition-colors" onClick={(e) => handleEditName(e, selectedSensor)} title="Click to rename">
-                            {selectedSensor.name}
-                          </h2>
-                          <button
-                            onClick={(e) => handleEditName(e, selectedSensor)}
-                            className="opacity-0 group-hover/title:opacity-100 text-slate-300 hover:text-blue-600 transition-all p-1.5 rounded-lg hover:bg-slate-100"
-                            title="Rename Field"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                          <StatusBadge status={selectedSensor.status} />
-                        </div>
+                          <div className="flex items-center gap-3 group/title">
+                            <h2 className="text-3xl font-bold text-slate-900 tracking-tight cursor-pointer hover:text-emerald-700 transition-colors" onClick={(e) => handleEditName(e, selectedSensor)} title="Click to rename">
+                                {selectedSensor.name}
+                            </h2>
+                            <button onClick={(e) => handleEditName(e, selectedSensor)} className="opacity-0 group-hover/title:opacity-100 text-slate-300 hover:text-blue-600 transition-all p-1.5 rounded-lg hover:bg-slate-100" title="Rename Field"><Edit2 size={18} /></button>
+                            <StatusBadge status={selectedSensor.status} />
+                          </div>
                       )}
                     </div>
-
+                    
                     <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
                       {(() => {
-                        const isLora = isDeviceType(selectedSensor, 'lora');
-                        const isWifi = isDeviceType(selectedSensor, 'wifi');
-
-                        return (
-                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${isLora ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : isWifi ? 'bg-green-50 text-green-700 border-green-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
-                            {isLora ? <Radio size={12} /> : isWifi ? <Wifi size={12} /> : <Smartphone size={12} />}
-                            {isLora ? 'LoRa' : isWifi ? 'WiFi' : 'GSM'}
-                          </div>
-                        );
+                          const isLora = isDeviceType(selectedSensor, 'lora');
+                          const isWifi = isDeviceType(selectedSensor, 'wifi');
+                          return (
+                             <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${isLora ? 'bg-indigo-100 text-indigo-700 border-indigo-100' : isWifi ? 'bg-sky-100 text-sky-700 border-sky-100' : 'bg-orange-100 text-orange-700 border-orange-100'}`}>
+                                  {isLora ? <Radio size={12} /> : isWifi ? <Wifi size={12} /> : <Smartphone size={12} />}
+                                  {isLora ? 'LoRa' : isWifi ? 'WiFi' : 'GSM'}
+                              </div>
+                          );
                       })()}
                       <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-xs border border-slate-200">{selectedSensor.id}</span>
-                      <span className="flex items-center gap-1.5">
-                        <Clock size={14} className="text-slate-400" />
-                        Updated {getTimeAgo(selectedSensor.lastUpdated)}
-                      </span>
+                      <span className="flex items-center gap-1.5"><Clock size={14} className="text-slate-400" />Updated {getTimeAgo(selectedSensor.lastUpdated)}</span>
                     </div>
                   </div>
-
+                  
                   <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-6">
-                    <div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Water Depth</div>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-4xl font-bold text-slate-900 tracking-tighter">{selectedSensor.currentLevel}</span>
-                        <span className="text-lg font-medium text-slate-400">cm</span>
+                      <div>
+                          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{t('water.level')}</div>
+                          <div className="flex items-baseline gap-1">
+                              <span className="text-4xl font-bold text-slate-900 tracking-tighter">{selectedSensor.currentLevel}</span>
+                              <span className="text-lg font-medium text-slate-400">{t('unit.cm')}</span>
+                          </div>
                       </div>
-                    </div>
-                    <div className="hidden sm:block h-10 w-px bg-slate-100"></div>
-                    <div className="sm:min-w-[200px]">
-                      <IrrigationAdvice
-                        level={selectedSensor.currentLevel}
-                        weather={weather}
-                        cropStage={getCropInfo(selectedSensor.id) ? { name: getCropInfo(selectedSensor.id)!.stageName, index: getCropInfo(selectedSensor.id)!.stageIndex } : undefined}
-                        plotName={selectedSensor.name}
-                      />
-                      {weather && weather.isRainy && (
-                        <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                          <CloudRain size={12} /> Rain Forecast: {weather.rainForecast24h}mm
-                        </div>
-                      )}
-                    </div>
+                      <div className="hidden sm:block h-10 w-px bg-slate-100"></div>
+                      <div className="sm:min-w-[200px]">
+                          <IrrigationAdvice 
+                              level={selectedSensor.currentLevel} 
+                              weather={weather}
+                              cropStage={getCropInfo(selectedSensor.id) ? { name: getCropInfo(selectedSensor.id)!.stageName, index: getCropInfo(selectedSensor.id)!.stageIndex } : undefined}
+                              plotName={selectedSensor.name}
+                          />
+                          {weather && weather.isRainy && (
+                              <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                                  <CloudRain size={12} /> Rain Forecast: {weather.rainForecast24h}mm
+                              </div>
+                          )}
+                      </div>
                   </div>
                 </div>
-
+                
                 <div className="p-6 md:p-8">
-                  <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                    <Zap size={16} className="text-amber-500" />
-                    Field Water History
-                  </h3>
+                  <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2"><Zap size={16} className="text-amber-500" />Field Water History</h3>
                   <WaterLevelChart data={selectedSensor.history} />
                 </div>
               </div>
 
               <div className="lg:col-span-1">
-                <CropManager
-                  sensorId={selectedSensor.id}
-                  weather={weather}
-                  onSave={() => setConfigVersion(v => v + 1)}
-                />
+                 <CropManager 
+                    sensorId={selectedSensor.id} 
+                    weather={weather} 
+                    onSave={() => {
+                        const config = localStorage.getItem(`crop_${selectedSensor.id}`);
+                        if (config) {
+                             saveCloudSetting(selectedSensor.id, 'cropConfig', JSON.parse(config));
+                        }
+                        setConfigVersion(v => v + 1)
+                    }} 
+                 />
               </div>
             </div>
 
             <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 md:p-8">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <FileText size={14} />
-                Node Telemetry
-              </h3>
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><FileText size={14} />Node Telemetry</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <DetailCard label="Last Received" value={formatDateTime(selectedSensor.raw["Gateway Received Time"])} />
                 <DetailCard label="Batch Upload" value={formatDateTime(selectedSensor.raw["Batch Upload Time"])} />
@@ -680,282 +716,245 @@ function App() {
           </div>
         ) : (
           <>
-            {weather && (
-              <div className="mb-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-blue-200 animate-in fade-in slide-in-from-top-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          {weather && activeTab === 'dashboard' && (
+            <div className="mb-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-blue-200 animate-in fade-in slide-in-from-top-4">
+              {/* Weather Card Content (Same as before) */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
-                    <div className="flex items-center gap-2 opacity-90 text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">
-                      <MapPin size={12} /> {weather.locationName || 'Local Field'}
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        {weather.isRainy ? <CloudRain size={32} /> : <Sun size={32} />}
-                        <span className="text-4xl font-bold tracking-tight">{weather.temp}°</span>
+                      <div className="flex items-center gap-2 opacity-90 text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">
+                          <MapPin size={12} /> {weather.locationName || 'Local Field'}
                       </div>
-                      <div className="h-8 w-px bg-white/20"></div>
-                      <div>
-                        <p className="font-semibold text-lg leading-none">{weather.conditionText}</p>
-                        <p className="text-sm text-blue-100 opacity-90 mt-1">24h Forecast</p>
+                      <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-2">
+                              {weather.isRainy ? <CloudRain size={32} /> : <Sun size={32} />}
+                              <span className="text-4xl font-bold tracking-tight">{weather.temp}°</span>
+                          </div>
+                          <div className="h-8 w-px bg-white/20"></div>
+                          <div>
+                              <p className="font-semibold text-lg leading-none">{weather.conditionText}</p>
+                              <p className="text-sm text-blue-100 opacity-90 mt-1">24h Forecast</p>
+                          </div>
                       </div>
-                    </div>
                   </div>
-
+                  
                   <div className="flex items-center gap-6 bg-white/10 rounded-xl p-3 backdrop-blur-sm w-full sm:w-auto justify-around sm:justify-start border border-white/10">
-                    <div className="flex flex-col items-center sm:items-start">
-                      <span className="text-[10px] uppercase tracking-wider font-bold text-blue-100 mb-0.5">Rain</span>
-                      <span className="text-xl font-bold">{weather.rainForecast24h}<span className="text-sm font-medium opacity-70 ml-0.5">mm</span></span>
-                    </div>
-                    <div className="flex flex-col items-center sm:items-start">
-                      <span className="text-[10px] uppercase tracking-wider font-bold text-blue-100 mb-0.5">Chance</span>
-                      <span className="text-xl font-bold">{weather.rainChance}<span className="text-sm font-medium opacity-70 ml-0.5">%</span></span>
-                    </div>
-                    <button
-                      onClick={handleRefreshWeather}
-                      disabled={weatherLoading}
-                      className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
-                      title="Refresh Weather"
-                    >
-                      <RefreshCw size={16} className={weatherLoading ? 'animate-spin' : ''} />
-                    </button>
+                      <div className="flex flex-col items-center sm:items-start">
+                          <span className="text-[10px] uppercase tracking-wider font-bold text-blue-100 mb-0.5">Rain</span>
+                          <span className="text-xl font-bold">{weather.rainForecast24h}<span className="text-sm font-medium opacity-70 ml-0.5">mm</span></span>
+                      </div>
+                      <div className="flex flex-col items-center sm:items-start">
+                          <span className="text-[10px] uppercase tracking-wider font-bold text-blue-100 mb-0.5">Chance</span>
+                          <span className="text-xl font-bold">{weather.rainChance}<span className="text-sm font-medium opacity-70 ml-0.5">%</span></span>
+                      </div>
+                      <button onClick={handleRefreshWeather} disabled={weatherLoading} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors" title="Refresh Weather">
+                          <RefreshCw size={16} className={weatherLoading ? 'animate-spin' : ''} />
+                      </button>
                   </div>
-                </div>
               </div>
-            )}
+            </div>
+          )}
+          
+          {!weather && activeTab === 'dashboard' && (
+             <div className="mb-6 bg-blue-50 rounded-xl p-4 flex items-center justify-between border border-blue-100">
+                 <div className="flex items-center gap-3">
+                    <div className="bg-white p-2 rounded-full shadow-sm text-blue-500"><CloudRain size={16} /></div>
+                    <div>
+                        <h3 className="text-sm font-bold text-blue-900">Get Local Weather</h3>
+                        <p className="text-xs text-blue-700">{weatherError ? 'Location access failed. Check device permissions.' : 'For smarter irrigation advice'}</p>
+                    </div>
+                 </div>
+                 <button onClick={handleUpdateLocation} disabled={weatherLoading} className="bg-white text-blue-600 text-xs font-bold px-3 py-2 rounded-lg shadow-sm border border-blue-100">
+                    {weatherLoading ? 'Loading...' : 'Enable'}
+                 </button>
+             </div>
+          )}
 
-            {!weather && (
-              <div className="mb-6 bg-blue-50 rounded-xl p-4 flex items-center justify-between border border-blue-100">
-                <div className="flex items-center gap-3">
-                  <div className="bg-white p-2 rounded-full shadow-sm text-blue-500"><CloudRain size={16} /></div>
-                  <div>
-                    <h3 className="text-sm font-bold text-blue-900">Get Local Weather</h3>
-                    <p className="text-xs text-blue-700">{weatherError ? 'Location access failed. Check device permissions.' : 'For smarter irrigation advice'}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleUpdateLocation}
-                  disabled={weatherLoading}
-                  className="bg-white text-blue-600 text-xs font-bold px-3 py-2 rounded-lg shadow-sm border border-blue-100"
-                >
-                  {weatherLoading ? 'Loading...' : 'Enable'}
-                </button>
-              </div>
-            )}
-
-            {(activeGateway || gateway) && !isRearranging && (
-              <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+          {(activeGateway || gateway) && !isRearranging && activeTab === 'dashboard' && (
+            <div className="animate-in fade-in slide-in-from-top-4 duration-500">
                 <SystemHealth status={activeGateway || gateway!} />
-              </div>
-            )}
+            </div>
+          )}
 
-            {isRearranging && (
-              <div className="mb-6 bg-emerald-600 text-white p-4 rounded-xl shadow-lg shadow-emerald-200 animate-in fade-in slide-in-from-top-2 flex items-center justify-between">
+          {isRearranging && activeTab === 'dashboard' && (
+            <div className="mb-6 bg-emerald-600 text-white p-4 rounded-xl shadow-lg shadow-emerald-200 animate-in fade-in slide-in-from-top-2 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="bg-white/20 p-2 rounded-lg"><Move className="text-white" size={20} /></div>
-                  <div>
+                <div className="bg-white/20 p-2 rounded-lg"><Grab className="text-white" size={20} /></div>
+                <div>
                     <h3 className="font-bold text-sm">Arrange Fields</h3>
-                    <p className="text-emerald-100 text-xs">Use the arrow buttons to reorder the grid.</p>
-                  </div>
+                    <p className="text-emerald-100 text-xs">Drag and drop to reorder the plots.</p>
                 </div>
-                <button
-                  onClick={() => setIsRearranging(false)}
-                  className="bg-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-emerald-50 transition-colors"
-                >
-                  Done
-                </button>
-              </div>
-            )}
-
-            {hasMixedDevices && !isRearranging && (
+                </div>
+                <button onClick={() => setIsRearranging(false)} className="bg-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-emerald-50 transition-colors">Done</button>
+            </div>
+          )}
+          
+          {hasMixedDevices && !isRearranging && activeTab === 'dashboard' && (
               <div className="flex gap-2 mb-6 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-fit animate-in fade-in flex-wrap">
-                <button
-                  onClick={() => setDashboardFilter('all')}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${dashboardFilter === 'all' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  All Fields
-                </button>
-                <button
-                  onClick={() => setDashboardFilter('lora')}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'lora' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  <Radio size={12} /> LoRa Network
-                </button>
-                <button
-                  onClick={() => setDashboardFilter('gsm')}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'gsm' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  <Smartphone size={12} /> GSM
-                </button>
-                <button
-                  onClick={() => setDashboardFilter('wifi')}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'wifi' ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  <Wifi size={12} /> WiFi
-                </button>
+                  <button onClick={() => setDashboardFilter('all')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${dashboardFilter === 'all' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'}`}>{t('filter.all')}</button>
+                  <button onClick={() => setDashboardFilter('lora')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'lora' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Radio size={12} /> {t('filter.lora')}</button>
+                  <button onClick={() => setDashboardFilter('gsm')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'gsm' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}><Smartphone size={12} /> {t('filter.gsm')}</button>
+                  <button onClick={() => setDashboardFilter('wifi')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'wifi' ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}><Wifi size={12} /> {t('filter.wifi')}</button>
               </div>
+          )}
+
+          {activeTab === 'dashboard' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
+            {filteredSensors.length === 0 && !loading && !error && (
+               <div className="col-span-full flex flex-col items-center justify-center p-16 bg-white rounded-2xl border border-slate-200 border-dashed text-center">
+                 <div className="bg-slate-50 p-4 rounded-full mb-4">
+                   <LayoutDashboard className="h-10 w-10 text-slate-300" />
+                 </div>
+                 <h3 className="text-lg font-semibold text-slate-900">{t('empty.title')}</h3>
+                 <p className="text-slate-500 mt-2">{t('empty.subtitle')}</p>
+               </div>
             )}
+            {filteredSensors.map((sensor, index) => {
+              const cropInfo = getCropInfo(sensor.id);
+              const progress = cropInfo ? Math.min((cropInfo.days / cropInfo.totalDuration) * 100, 100) : 0;
+              const phaseGradient = cropInfo ? getPhaseGradient(cropInfo.phase) : 'from-emerald-400 to-emerald-600';
+              const isDragging = draggedId === sensor.id;
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
-              {filteredSensors.length === 0 && !loading && !error && (
-                <div className="col-span-full flex flex-col items-center justify-center p-16 bg-white rounded-2xl border border-slate-200 border-dashed text-center">
-                  <div className="bg-slate-50 p-4 rounded-full mb-4">
-                    <LayoutDashboard className="h-10 w-10 text-slate-300" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-slate-900">No Fields Found</h3>
-                  <p className="text-slate-500 mt-2">Try adjusting the device filters above.</p>
-                </div>
-              )}
-              {filteredSensors.map((sensor, index) => {
-                const cropInfo = getCropInfo(sensor.id);
-                const progress = cropInfo ? Math.min((cropInfo.days / cropInfo.totalDuration) * 100, 100) : 0;
-                const phaseGradient = cropInfo ? getPhaseGradient(cropInfo.phase) : 'from-emerald-400 to-emerald-600';
-
-                return (
-                  <div
-                    key={sensor.id}
-                    onClick={() => setSelectedSensor(sensor)}
-                    className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer group relative overflow-hidden"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        {(() => {
+              return (
+              <div 
+                key={sensor.id}
+                onClick={() => !isRearranging && setSelectedSensor(sensor)}
+                draggable={isRearranging}
+                onDragStart={(e) => isRearranging && handleDragStart(e, sensor.id)}
+                onDragOver={(e) => isRearranging && handleDragOver(e)}
+                onDrop={(e) => isRearranging && handleDrop(e, sensor.id)}
+                className={`bg-white rounded-2xl p-6 border border-slate-200 shadow-sm transition-all group relative overflow-hidden ${isRearranging ? 'cursor-grab active:cursor-grabbing hover:border-emerald-400 hover:shadow-md' : 'cursor-pointer hover:shadow-md hover:border-emerald-200'} ${isDragging ? 'opacity-50 border-emerald-400 scale-95' : ''}`}
+              >
+                <div className="flex justify-between items-start mb-4">
+                   <div className="flex items-center gap-3 overflow-hidden">
+                      {(() => {
                           const isLora = isDeviceType(sensor, 'lora');
                           const isWifi = isDeviceType(sensor, 'wifi');
                           return (
-                            <div className={`p-2 rounded-xl shrink-0 ${isLora ? 'bg-indigo-50 text-indigo-600' : isWifi ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
-                              {isLora ? <Radio size={18} /> : isWifi ? <Wifi size={18} /> : <Smartphone size={18} />}
-                            </div>
+                             <div className={`p-2 rounded-xl shrink-0 ${isLora ? 'bg-indigo-100 text-indigo-700' : isWifi ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}`}>
+                                  {isLora ? <Radio size={18} /> : isWifi ? <Wifi size={18} /> : <Smartphone size={18} />}
+                              </div>
                           );
-                        })()}
-                        <div className="flex-1 min-w-0">
+                      })()}
+                      <div className="flex-1 min-w-0">
                           {editingNameId === sensor.id ? (
-                            <div className="flex items-center gap-1 animate-in fade-in" onClick={e => e.stopPropagation()}>
-                              <input
-                                type="text"
-                                value={tempName}
-                                onChange={e => setTempName(e.target.value)}
-                                className="w-full min-w-[80px] text-sm font-bold text-slate-900 border border-blue-300 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSaveName(e, sensor.id);
-                                  if (e.key === 'Escape') handleCancelEdit(e);
-                                }}
-                                onClick={e => e.stopPropagation()}
-                              />
-                              <button onClick={(e) => handleSaveName(e, sensor.id)} className="p-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 shrink-0"><Check size={12} /></button>
-                              <button onClick={(e) => handleCancelEdit(e)} className="p-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 shrink-0"><X size={12} /></button>
-                            </div>
+                              <div className="flex items-center gap-1 animate-in fade-in" onClick={e => e.stopPropagation()}>
+                                  <input 
+                                      type="text" 
+                                      value={tempName}
+                                      onChange={e => setTempName(e.target.value)}
+                                      className="w-full min-w-[80px] text-sm font-bold text-slate-900 border border-blue-300 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+                                      autoFocus
+                                      onKeyDown={(e) => {
+                                          if(e.key === 'Enter') handleSaveName(e, sensor.id);
+                                          if(e.key === 'Escape') handleCancelEdit(e);
+                                      }}
+                                      onClick={e => e.stopPropagation()}
+                                  />
+                                  <button onClick={(e) => handleSaveName(e, sensor.id)} className="p-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 shrink-0"><Check size={12}/></button>
+                                  <button onClick={(e) => handleCancelEdit(e)} className="p-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 shrink-0"><X size={12}/></button>
+                              </div>
                           ) : (
-                            <div className="flex items-center gap-2 group/name relative">
-                              <h3 className="font-bold text-slate-900 group-hover:text-emerald-600 transition-colors truncate">{sensor.name}</h3>
-                              <button
-                                onClick={(e) => handleEditName(e, sensor)}
-                                className="text-slate-200 hover:text-blue-600 transition-all p-1 rounded hover:bg-slate-100 shrink-0"
-                                title="Rename Plot"
-                              >
-                                <Edit2 size={12} />
-                              </button>
-                            </div>
+                              <div className="flex items-center gap-2 group/name relative">
+                                  <h3 className="font-bold text-slate-900 group-hover:text-emerald-600 transition-colors truncate">{sensor.name}</h3>
+                                  {!isRearranging && (
+                                    <button 
+                                        onClick={(e) => handleEditName(e, sensor)}
+                                        className="text-slate-200 hover:text-blue-600 transition-all p-1 rounded hover:bg-slate-100 shrink-0"
+                                        title="Rename Plot"
+                                    >
+                                        <Edit2 size={12} />
+                                    </button>
+                                  )}
+                              </div>
                           )}
                           <p className="text-xs text-slate-400 font-mono truncate">{sensor.id}</p>
-                        </div>
                       </div>
-                      <StatusBadge status={sensor.status} />
-                    </div>
+                   </div>
+                   <StatusBadge status={sensor.status} />
+                </div>
 
-                    {/* Water Level & Gauge */}
-                    <div className="flex items-center justify-between mb-4 pr-2">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Water Level</span>
+                {/* Water Level & Gauge */}
+                <div className="flex items-center justify-between mb-4 pr-2">
+                    <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{t('water.level')}</span>
                         <div className="flex items-baseline gap-1 mb-2">
-                          <span className="text-4xl font-bold text-slate-900 tracking-tighter">{sensor.currentLevel}</span>
-                          <span className="text-base font-medium text-slate-400">cm</span>
+                            <span className="text-4xl font-bold text-slate-900 tracking-tighter">{sensor.currentLevel}</span>
+                            <span className="text-base font-medium text-slate-400">{t('unit.cm')}</span>
                         </div>
                         <div className="text-xs font-semibold">
-                          {sensor.currentLevel >= 15 ? (
-                            <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100 flex items-center w-fit gap-1">
-                              <ArrowUp size={12} /> {Math.round(sensor.currentLevel - 15)}cm Above
-                            </span>
-                          ) : (
-                            <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md border border-amber-100 flex items-center w-fit gap-1">
-                              <ArrowDown size={12} /> {Math.abs(Math.round(sensor.currentLevel - 15))}cm Below
-                            </span>
-                          )}
+                            {sensor.currentLevel >= 15 ? (
+                                <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100 flex items-center w-fit gap-1">
+                                    <ArrowUp size={12} /> {Math.round(sensor.currentLevel - 15)}cm {t('water.above')}
+                                </span>
+                            ) : (
+                                <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md border border-amber-100 flex items-center w-fit gap-1">
+                                    <ArrowDown size={12} /> {Math.abs(Math.round(sensor.currentLevel - 15))}cm {t('water.below')}
+                                </span>
+                            )}
                         </div>
-                      </div>
-                      <AWDGauge level={sensor.currentLevel} />
                     </div>
+                    <AWDGauge level={sensor.currentLevel} />
+                </div>
 
-                    {/* Crop Stage Info with Visual and Progress Bar */}
-                    {cropInfo && (
-                      <div className="mb-4 rounded-xl border border-emerald-100 bg-gradient-to-b from-emerald-50/40 to-white overflow-hidden relative group-hover:border-emerald-200 transition-colors">
+                {/* Crop Stage Info with Visual and Progress Bar */}
+                {cropInfo && (
+                    <div className="mb-4 rounded-xl border border-emerald-100 bg-gradient-to-b from-emerald-50/40 to-white overflow-hidden relative group-hover:border-emerald-200 transition-colors">
                         <div className="relative z-10 bg-white/60 backdrop-blur-[2px] border-b border-emerald-100/50">
-                          <div className="flex items-center justify-between px-3 py-2">
-                            <div className="flex items-center gap-1.5 font-bold text-emerald-800 text-xs">
-                              <Sprout size={14} className="text-emerald-600" />
-                              {cropInfo.stageName}
+                             <div className="flex items-center justify-between px-3 py-2">
+                                <div className="flex items-center gap-1.5 font-bold text-emerald-800 text-xs">
+                                    <Sprout size={14} className="text-emerald-600" />
+                                    {cropInfo.stageName}
+                                </div>
+                                <div className="text-[10px] font-bold text-emerald-600 bg-white px-2 py-0.5 rounded-full border border-emerald-100 shadow-sm">
+                                    {t('crop.days_old')} {cropInfo.days}
+                                </div>
                             </div>
-                            <div className="text-[10px] font-bold text-emerald-600 bg-white px-2 py-0.5 rounded-full border border-emerald-100 shadow-sm">
-                              Day {cropInfo.days}
+                            {/* Growth Progress Bar */}
+                            <div className="h-1 w-full bg-slate-100">
+                                <div 
+                                    className={`h-full bg-gradient-to-r ${phaseGradient} shadow-[0_0_10px_rgba(16,185,129,0.4)] transition-all duration-1000 ease-out`} 
+                                    style={{ width: `${progress}%` }}
+                                ></div>
                             </div>
-                          </div>
-                          {/* Growth Progress Bar */}
-                          <div className="h-1 w-full bg-slate-100">
-                            <div
-                              className={`h-full bg-gradient-to-r ${phaseGradient} shadow-[0_0_10px_rgba(16,185,129,0.4)] transition-all duration-1000 ease-out`}
-                              style={{ width: `${progress}%` }}
-                            ></div>
-                          </div>
                         </div>
-
+                        
                         <div className="h-24 w-full flex items-end justify-center relative">
-                          <div className="w-full h-full p-2">
-                            <PaddyVisual stageIndex={cropInfo.stageIndex} />
-                          </div>
+                             <div className="w-full h-full p-2">
+                                <PaddyVisual stageIndex={cropInfo.stageIndex} />
+                             </div>
                         </div>
-                      </div>
-                    )}
-
-                    {/* Irrigation Advice */}
-                    <IrrigationAdvice
-                      level={sensor.currentLevel}
-                      weather={weather}
-                      cropStage={cropInfo ? { name: cropInfo.stageName, index: cropInfo.stageIndex } : undefined}
-                      plotName={sensor.name}
-                    />
-
-                    <div className="flex items-center justify-between text-xs text-slate-500 border-t border-slate-50 pt-3 mt-3">
-                      <div className="flex items-center gap-1.5">
-                        <Clock size={12} />
-                        {getTimeAgo(sensor.lastUpdated)}
-                      </div>
-                      <div className="flex items-center gap-1 font-medium text-emerald-600 group-hover:translate-x-1 transition-transform">
-                        View Details <ArrowRight size={12} />
-                      </div>
                     </div>
+                )}
 
-                    {/* Rearrange Overlay */}
-                    {isRearranging && (
-                      <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center gap-2 z-10 animate-in fade-in" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={(e) => moveSensor(e, index, -1)}
-                          disabled={index === 0}
-                          className="p-3 rounded-full bg-white border border-slate-200 shadow-sm hover:bg-slate-50 disabled:opacity-30"
-                        >
-                          <ArrowLeft size={20} />
-                        </button>
-                        <button
-                          onClick={(e) => moveSensor(e, index, 1)}
-                          disabled={index === sensors.length - 1}
-                          className="p-3 rounded-full bg-white border border-slate-200 shadow-sm hover:bg-slate-50 disabled:opacity-30"
-                        >
-                          <ArrowRight size={20} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                {/* Irrigation Advice */}
+                <IrrigationAdvice 
+                    level={sensor.currentLevel} 
+                    weather={weather}
+                    cropStage={cropInfo ? { name: cropInfo.stageName, index: cropInfo.stageIndex } : undefined}
+                    plotName={sensor.name}
+                />
+                
+                <div className="flex items-center justify-between text-xs text-slate-500 border-t border-slate-50 pt-3 mt-3">
+                   <div className="flex items-center gap-1.5">
+                      <Clock size={12} />
+                      {getTimeAgo(sensor.lastUpdated)}
+                   </div>
+                   {!isRearranging && (
+                       <div className="flex items-center gap-1 font-medium text-emerald-600 group-hover:translate-x-1 transition-transform">
+                          {t('link.details')} <ArrowRight size={12} />
+                       </div>
+                   )}
+                </div>
+
+                {/* Rearrange Overlay */}
+                {isRearranging && (
+                    <div className="absolute inset-0 bg-transparent z-10" />
+                )}
+              </div>
+              );
+            })}
+          </div>
+          )}
           </>
         )}
       </main>
@@ -972,22 +971,14 @@ const DetailCard = ({ label, value }: { label: string, value: string }) => (
 
 const CurrentClock = () => {
   const [time, setTime] = useState(new Date());
-
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-
   return (
     <div className="flex flex-col items-end mr-4 border-r border-slate-100 pr-4">
-      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-        {time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-      </span>
-      <span className="text-sm font-mono font-bold text-slate-700 leading-none">
-        {time.toLocaleTimeString()}
-      </span>
+       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+       <span className="text-sm font-mono font-bold text-slate-700 leading-none">{time.toLocaleTimeString()}</span>
     </div>
   );
 };
-
-export default App;

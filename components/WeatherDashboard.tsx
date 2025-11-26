@@ -153,7 +153,10 @@ export const WeatherDashboard: React.FC<Props> = ({ weather, loading, error, onR
                              { label: 'Humidity', value: weather.humidity, unit: '%', icon: Droplets },
                          ].map((stat, i) => (
                              <div key={i} className="bg-white/10 p-3 rounded-2xl backdrop-blur-sm border border-white/5 flex flex-col items-center justify-center min-w-[80px]">
-                                <span className="text-[10px] uppercase tracking-wider font-bold text-blue-100 mb-1">{stat.label}</span>
+                                <div className="flex items-center gap-1 mb-1 opacity-80 text-blue-100">
+                                   <stat.icon size={10} />
+                                   <span className="text-[10px] uppercase tracking-wider font-bold">{stat.label}</span>
+                                </div>
                                 <span className="text-lg font-bold">{stat.value}<span className="text-xs font-medium opacity-70 ml-0.5">{stat.unit}</span></span>
                              </div>
                          ))}

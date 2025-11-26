@@ -33,9 +33,18 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
   
   const SOIL_LEVEL = 15;
   
-  // Rules (Absolute Gauge Readings)
-  const THRESHOLD_LOW = 5;   // Very Dry
-  const THRESHOLD_HIGH = 20; // Excessive Water
+  // Load User Thresholds (with defaults)
+  let THRESHOLD_LOW = 5;
+  let THRESHOLD_HIGH = 20;
+  
+  try {
+      const saved = localStorage.getItem('app_thresholds');
+      if (saved) {
+          const { low, high } = JSON.parse(saved);
+          if (!isNaN(low)) THRESHOLD_LOW = low;
+          if (!isNaN(high)) THRESHOLD_HIGH = high;
+      }
+  } catch(e) {}
 
   // Weather Factors
   const rainChance = weather?.rainChance || 0;
@@ -98,30 +107,30 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
         }
     }
 
-    // --- PRIORITY 2: HIGH WATER SAFETY (>20cm) ---
+    // --- PRIORITY 2: HIGH WATER SAFETY ---
     if (level > THRESHOLD_HIGH) { 
         if (isRainExpected) {
              return setAdvice(
                  'warn',
                  'Drain Water',
-                 'Drain to 15cm',
+                 `Drain to ${SOIL_LEVEL}cm`,
                  `High level (${level}cm) + Rain Forecast (${rainChance}%). Risk of overflow.`,
-                 'Lower spillway to 15cm mark.',
+                 `Lower spillway to ${SOIL_LEVEL}cm mark.`,
                  <ArrowDown size={16} />
              );
         } else {
              return setAdvice(
                  'info',
                  'Stop Irrigation',
-                 'Level is High (>20cm)',
-                 `Water depth (${level}cm) is excessive.`,
+                 `Level > ${THRESHOLD_HIGH}cm`,
+                 `Water depth (${level}cm) exceeds your upper limit (${THRESHOLD_HIGH}cm).`,
                  'Let water subside naturally. Do not add water.',
                  <XCircle size={16} />
              );
         }
     }
 
-    // --- PRIORITY 3: CRITICAL LOW (< 5cm) ---
+    // --- PRIORITY 3: CRITICAL LOW ---
     if (level < THRESHOLD_LOW) {
         if (isRainExpected) {
             return setAdvice(
@@ -136,19 +145,19 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
             return setAdvice(
                 'critical',
                 'Start Irrigation',
-                'Target: 15cm',
-                `Critical low level (${level}cm). Soil drying out.`,
-                'Irrigate immediately to restore soil saturation (15cm).',
+                `Target: ${SOIL_LEVEL}cm`,
+                `Critical low level (${level}cm). Below limit (${THRESHOLD_LOW}cm).`,
+                `Irrigate immediately to restore soil saturation (${SOIL_LEVEL}cm).`,
                 <Droplets size={16} />
             );
         }
     }
 
-    // --- PRIORITY 4: INTERMEDIATE LEVELS (5cm - 20cm) ---
+    // --- PRIORITY 4: INTERMEDIATE LEVELS ---
     
     // CASE A: Flood Required (Establishment, Booting, Flowering)
     if (needsFlood) {
-        if (level < SOIL_LEVEL) { // 5-15cm (Below soil surface)
+        if (level < SOIL_LEVEL) { // Below soil surface
              if (isRainExpected) {
                  return setAdvice('warn', 'Delay Irrigation', 'Wait for Rain', `Water below soil surface (${level}cm), but rain expected.`, null, <CloudRain size={16} />);
              }
@@ -161,7 +170,7 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
                  <Droplets size={16} />
              );
         } else {
-             // 15-20cm (Good Flood)
+             // Good Flood
              return setAdvice(
                  'good',
                  'Optimal Level',
@@ -175,24 +184,24 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
 
     // CASE B: AWD Allowed (Tillering, Elongation, Dough)
     if (allowAWD) {
-        if (level < SOIL_LEVEL) { // 5-15cm
-            // User requested: "Start irrigation after reaching this level"
+        if (level < SOIL_LEVEL) { 
+            // Below Soil, but above critical threshold
             return setAdvice(
                 'info',
                 'Stop Irrigation',
-                'Start Irrigation at 5cm',
-                `AWD Phase: Allow water to drop. Current: ${level}cm. Re-irrigate ONLY when it hits 5cm.`,
+                `Start Irrigation at ${THRESHOLD_LOW}cm`,
+                `AWD Phase: Allow water to drop. Current: ${level}cm. Re-irrigate ONLY when it hits ${THRESHOLD_LOW}cm.`,
                 'Allowing soil to aerate strengthens roots.',
                 <ArrowDown size={16} />
             );
         } else {
-            // 15-20cm
+            // Above Soil, below high threshold
             return setAdvice(
                 'good',
                 'Stop Irrigation',
                 'Maintain > 15cm',
                 `Level (${level}cm) is sufficient. No need to add water yet.`,
-                'Let level drop naturally to 5cm before next irrigation.',
+                `Let level drop naturally to ${THRESHOLD_LOW}cm before next irrigation.`,
                 <Check size={16} />
             );
         }

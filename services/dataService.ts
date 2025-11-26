@@ -2,17 +2,89 @@
 import { SheetRow, SensorData, GatewayStatus } from '../types';
 
 // --- DATA CONFIGURATION ---
-const DATA_SOURCES = [
-  // 1. Original LoRa Gateway Sheet
+const DEFAULT_DATA_SOURCES = [
+  // 1. Original LoRa Gateway Sheet (Primary for Settings)
   'https://script.google.com/macros/s/AKfycbwMl7VGQlu4--r5DjptzE8JF5XXDoRIWSnYJ-0qCuYBEQnLbaBvXHzBNmuQcgjiynnf/exec',
 
   // 2. Standalone GSM Device Sheet
   'https://script.google.com/macros/s/AKfycby61hthQVULKFW_1--hI0V2t-gjxOVSnUzZ6iHK-Q-RT2cpUbvgvmM7BfFt5rSOuR0MFw/exec',
 
   // 3. Standalone WiFi Device Sheet
-  // We append ?action=readAll to ensure we get the array of history
   'https://script.google.com/macros/s/AKfycbyUep63cVY28X9M-P-1ypTfXILhTCb9h0_YJkqQkiwoNlkhgOavrj2qlESiXge8OPEA0w/exec?action=readAll'
 ];
+
+// Helper to get active sources
+const getActiveDataSources = () => {
+    try {
+        const saved = localStorage.getItem('app_data_sources');
+        if (saved) {
+            const sources = JSON.parse(saved);
+            if (Array.isArray(sources) && sources.length > 0) return sources;
+        }
+    } catch (e) {
+        console.error("Error reading data sources", e);
+    }
+    return DEFAULT_DATA_SOURCES;
+};
+
+export const saveDataSources = (sources: string[]) => {
+    localStorage.setItem('app_data_sources', JSON.stringify(sources));
+};
+
+export const resetDataSources = () => {
+    localStorage.removeItem('app_data_sources');
+};
+
+// --- CLOUD SETTINGS API ---
+// We use the first data source (LoRa Sheet) as the "Master" for settings
+const getSettingsApiUrl = () => {
+    const sources = getActiveDataSources();
+    return sources.length > 0 ? sources[0] : '';
+};
+
+export const fetchCloudSettings = async () => {
+  try {
+    const url = getSettingsApiUrl();
+    if (!url) return null;
+    // Handle potential query params in URL
+    const separator = url.includes('?') ? '&' : '?';
+    const response = await fetch(`${url}${separator}action=getSettings`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (e) {
+    console.error("Failed to fetch cloud settings", e);
+    return null;
+  }
+};
+
+export const saveCloudSetting = async (deviceId: string, key: string, value: any) => {
+  try {
+    const url = getSettingsApiUrl();
+    if (!url) return false;
+    // Clean URL for POST (remove query params if any, though usually Apps Script handles POST to exec)
+    const cleanUrl = url.split('?')[0]; 
+    
+    const response = await fetch(cleanUrl, {
+      method: 'POST',
+      mode: 'no-cors', // Google Apps Script quirk
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'saveSetting',
+        deviceId,
+        key,
+        value
+      })
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to save cloud setting", e);
+    return false;
+  }
+};
+
+export const syncAllSettingsToCloud = async (localSettings: any) => {
+    // Placeholder for bulk sync if needed
+};
 // --------------------------
 
 // Helper to parse date strings robustly handling multiple formats (ISO, US, Euro)
@@ -96,9 +168,28 @@ export const formatDateTime = (dateStr: string): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
+// --- VALIDATION HELPER ---
+const isValidDeviceId = (id: string): boolean => {
+  if (!id) return false;
+  const cleanId = String(id).trim();
+  
+  if (cleanId.length === 0) return false;
+  if (['N/A', 'n/a', 'undefined', 'null', 'unknown'].includes(cleanId.toLowerCase())) return false;
+  
+  // Check if ID looks like an ISO Timestamp (e.g. 2025-11-25T10:46:14.272Z)
+  // Contains 'T', ends with 'Z' (optional), starts with 202x
+  if (cleanId.match(/^202[0-9]-[0-1][0-9]-[0-3][0-9]T/)) return false;
+  
+  // Check if ID looks like a standard Date (YYYY-MM-DD)
+  if (cleanId.match(/^202[0-9]-[0-1][0-9]-[0-3][0-9]$/)) return false;
+
+  return true;
+};
+// -------------------------
+
 export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
   try {
-    const activeSources = DATA_SOURCES.filter(url => url && url.trim().length > 0 && url.startsWith('http'));
+    const activeSources = getActiveDataSources().filter(url => url && url.trim().length > 0 && url.startsWith('http'));
 
     if (activeSources.length === 0) {
         console.warn("No data sources configured in dataService.ts");
@@ -215,7 +306,12 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
 
     sortedRows.forEach(row => {
       const deviceId = row["Device ID"];
-      if (!deviceId) return;
+      
+      // --- STRICT FILTER ---
+      if (!isValidDeviceId(deviceId)) {
+          return; // Skip invalid, empty, or timestamp-like IDs
+      }
+      // --------------------
 
       const rawLevel = Number(row["Water Level (cm)"]);
       const realLevel = isNaN(rawLevel) ? 0 : rawLevel;

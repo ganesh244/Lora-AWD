@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, Edit2, Sprout, Timer, AlertCircle, BookOpen, Bug, Droplets, Leaf, Scissors, Sun, Wind, Thermometer, Droplet, StickyNote, Smartphone } from 'lucide-react';
+import { Save, Edit2, Sprout, Timer, AlertCircle, BookOpen, Bug, Droplets, Leaf, Scissors, Sun, Wind, Thermometer, Droplet, StickyNote, Smartphone, Cloud, RefreshCw, Scale, Factory, Coins } from 'lucide-react';
 import { PaddyVisual } from './PaddyVisual';
 import { WeatherData } from '../services/weatherService';
+import { saveCloudSetting } from '../services/dataService';
 
 interface Props {
   sensorId: string;
@@ -13,6 +14,7 @@ interface Props {
 export interface CropConfig {
   variety: 'short' | 'medium' | 'long';
   transplantDate: string;
+  plotSizeAcres: number; // New Field
 }
 
 // Data source: IRRI & Generic Rice Growth Models
@@ -27,6 +29,18 @@ export const calculateStage = (cfg: CropConfig) => {
   const now = new Date().getTime();
   const days = Math.floor((now - start) / (1000 * 60 * 60 * 24));
   const totalDuration = VARIETY_DATA[cfg.variety].avg;
+
+  // Impact Calculations (Estimates per season per acre)
+  // Water: ~30% saving vs continuous flood. ~500,000 Liters/acre saving potential.
+  // Methane: AWD reduces CH4 by ~48%. Base ~100kg CH4/acre -> Save ~48kg.
+  // CO2e: 1kg CH4 = 25kg CO2e.
+  const progressPct = Math.min(Math.max(days / totalDuration, 0), 1);
+  const size = cfg.plotSizeAcres || 0; // Default to 0 if not set
+  
+  // Scale savings by progress (you save more as the season goes on)
+  const waterSavedLiters = Math.round(500000 * size * progressPct); 
+  const methaneSavedKg = (48 * size * progressPct).toFixed(1);
+  const co2SavedKg = (parseFloat(methaneSavedKg) * 25).toFixed(0);
 
   // Dynamic Stage Calculation based on % of Total Duration
   // NOTE: Gauge Scale: 0cm = Bottom, 15cm = Soil Surface, 30cm = Top
@@ -132,25 +146,38 @@ export const calculateStage = (cfg: CropConfig) => {
     ];
   }
 
-  return { days: Math.max(0, days), stageIndex, stageName, advice, phase, totalDuration, managementTips };
+  return { 
+    days: Math.max(0, days), 
+    stageIndex, 
+    stageName, 
+    advice, 
+    phase, 
+    totalDuration, 
+    managementTips,
+    ecoStats: { waterSavedLiters, methaneSavedKg, co2SavedKg } 
+  };
 };
 
 export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [config, setConfig] = useState<CropConfig | null>(null);
   const [notes, setNotes] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
   
   // Form State
   const [variety, setVariety] = useState<'short' | 'medium' | 'long'>('medium');
   const [date, setDate] = useState('');
+  const [plotSize, setPlotSize] = useState<string>('1.0');
 
   useEffect(() => {
+    // Load from local storage (which should be synced from cloud on App load)
     const saved = localStorage.getItem(`crop_${sensorId}`);
     if (saved) {
       const parsed = JSON.parse(saved);
       setConfig(parsed);
       setVariety(parsed.variety);
       setDate(parsed.transplantDate);
+      setPlotSize(parsed.plotSizeAcres ? String(parsed.plotSizeAcres) : '1.0');
     } else {
       setIsEditing(true);
     }
@@ -161,15 +188,23 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
 
   const handleSave = () => {
     if (!date) return;
-    const newConfig: CropConfig = { variety, transplantDate: date };
+    const newConfig: CropConfig = { 
+        variety, 
+        transplantDate: date,
+        plotSizeAcres: parseFloat(plotSize) || 0
+    };
     localStorage.setItem(`crop_${sensorId}`, JSON.stringify(newConfig));
     setConfig(newConfig);
     setIsEditing(false);
     if (onSave) onSave();
   };
 
-  const handleSaveNotes = () => {
+  const handleSaveNotes = async () => {
+    setSavingNotes(true);
     localStorage.setItem(`notes_${sensorId}`, notes);
+    // Sync to Cloud
+    await saveCloudSetting(sensorId, 'notes', notes);
+    setSavingNotes(false);
   };
 
   const getWeatherAnalysis = (stageIndex: number, weather: WeatherData) => {
@@ -227,15 +262,28 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
             </div>
           </div>
           
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Transplantation Date</label>
-            <input 
-              type="date" 
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full p-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-slate-900"
-              style={{ colorScheme: 'light' }}
-            />
+          <div className="grid grid-cols-2 gap-3">
+             <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label>
+                <input 
+                  type="date" 
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full p-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-slate-900"
+                  style={{ colorScheme: 'light' }}
+                />
+             </div>
+             <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Size (Acres)</label>
+                <input 
+                  type="number"
+                  step="0.1" 
+                  value={plotSize}
+                  onChange={(e) => setPlotSize(e.target.value)}
+                  className="w-full p-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white text-slate-900"
+                  placeholder="e.g. 1.0"
+                />
+             </div>
           </div>
 
           <button 
@@ -275,7 +323,7 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
                     <Sprout size={16} className="text-emerald-600" />
                     Crop Status
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">{VARIETY_DATA[config.variety].name}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{VARIETY_DATA[config.variety].name} • {config.plotSizeAcres || 0} Acres</p>
              </div>
              <div className="text-right">
                 <span className="text-2xl font-bold text-slate-800 block leading-none">{info.days}</span>
@@ -358,7 +406,8 @@ export const CropManager: React.FC<Props> = ({ sensorId, weather, onSave }) => {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Field Notes</span>
                     </div>
                     <div className="flex items-center gap-1 text-[9px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">
-                        <Smartphone size={10} /> Saved to device
+                        {savingNotes ? <RefreshCw size={10} className="animate-spin" /> : <Cloud size={10} />} 
+                        {savingNotes ? 'Syncing...' : 'Synced to Cloud'}
                     </div>
                 </div>
                 <textarea
