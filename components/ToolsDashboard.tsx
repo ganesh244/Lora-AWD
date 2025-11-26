@@ -1,135 +1,135 @@
 
 import React, { useState } from 'react';
-import { Calculator, Sprout, Coins, Scale, Leaf, ArrowRight, TrendingUp, FileBarChart, Printer, X } from 'lucide-react';
+import { Calculator, Coins, Scale, Leaf, TrendingUp, FileBarChart, Printer, X } from 'lucide-react';
 import { SensorData, SheetRow } from '../types';
 import { ReportTemplate } from './ReportTemplate';
 
 interface Props {
-  sensors: SensorData[];
-  logs?: SheetRow[]; // Added logs prop
+    sensors: SensorData[];
+    logs?: SheetRow[]; // Added logs prop
 }
 
 export const ToolsDashboard: React.FC<Props> = ({ sensors, logs = [] }) => {
-  const [selectedTool, setSelectedTool] = useState<'fertilizer' | 'yield' | 'report'>('fertilizer');
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportSensor, setReportSensor] = useState<SensorData | null>(null);
+    const [selectedTool, setSelectedTool] = useState<'fertilizer' | 'yield' | 'report'>('fertilizer');
+    const [showReportModal, setShowReportModal] = useState(false);
+    const [reportSensor, setReportSensor] = useState<SensorData | null>(null);
 
-  const handlePrint = () => {
-      window.print();
-  };
+    const handlePrint = () => {
+        window.print();
+    };
 
-  // Report Modal
-  if (showReportModal && reportSensor) {
-      return (
-          <div className="fixed inset-0 z-50 bg-white overflow-auto">
-              <div className="sticky top-0 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden">
-                  <h3 className="font-bold">Print Preview</h3>
-                  <div className="flex gap-3">
-                      <button onClick={handlePrint} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg font-bold text-sm transition-colors">
-                          <Printer size={16} /> Print / Save PDF
-                      </button>
-                      <button onClick={() => setShowReportModal(false)} className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg font-bold text-sm transition-colors">
-                          <X size={16} /> Close
-                      </button>
-                  </div>
-              </div>
-              <div className="p-8 bg-slate-100 min-h-screen print:bg-white print:p-0 print:min-h-0">
-                  <ReportTemplate sensor={reportSensor} logs={logs} dateRange="Last 30 Days" />
-              </div>
-          </div>
-      );
-  }
-
-  return (
-    <div className="animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
-        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-          <Calculator className="text-emerald-600" /> Agri-Tools
-        </h2>
-        <p className="text-slate-500 text-sm mt-1">Calculators to optimize inputs and generate reports.</p>
-        
-        <div className="flex flex-wrap gap-2 mt-4">
-            <button 
-                onClick={() => setSelectedTool('fertilizer')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'fertilizer' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-                <Leaf size={16} /> Fertilizer Calc
-            </button>
-            <button 
-                onClick={() => setSelectedTool('yield')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'yield' ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-                <TrendingUp size={16} /> Yield Estimator
-            </button>
-            <button 
-                onClick={() => setSelectedTool('report')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'report' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-                <FileBarChart size={16} /> Reports
-            </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-         {/* Input Section */}
-         <div className="lg:col-span-2">
-            {selectedTool === 'fertilizer' && <FertilizerCalc sensors={sensors} />}
-            {selectedTool === 'yield' && <YieldCalc sensors={sensors} />}
-            {selectedTool === 'report' && (
-                <ReportGenerator 
-                    sensors={sensors} 
-                    onGenerate={(sensor) => {
-                        setReportSensor(sensor);
-                        setShowReportModal(true);
-                    }} 
-                />
-            )}
-         </div>
-
-         {/* Info Sidebar */}
-         <div className="lg:col-span-1">
-            <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100">
-                <h3 className="font-bold text-blue-900 flex items-center gap-2 mb-3">
-                    <Scale size={18} />
-                    {selectedTool === 'fertilizer' ? 'Standard Dosage' : selectedTool === 'yield' ? 'Yield Benchmarks' : 'Report Features'}
-                </h3>
-                <div className="text-sm text-blue-800 space-y-3">
-                    {selectedTool === 'fertilizer' ? (
-                        <>
-                            <p>Recommendations based on standard NPK requirements for high-yield varieties.</p>
-                            <ul className="list-disc list-inside space-y-1 opacity-80">
-                                <li><strong>Basal:</strong> Before transplanting (DAP/MOP)</li>
-                                <li><strong>Tillering:</strong> 15-20 Days (Urea)</li>
-                                <li><strong>Panicle:</strong> 45-50 Days (Urea/MOP)</li>
-                            </ul>
-                        </>
-                    ) : selectedTool === 'yield' ? (
-                        <>
-                            <p>Estimations based on average panicle counts and grain weight.</p>
-                            <ul className="list-disc list-inside space-y-1 opacity-80">
-                                <li><strong>Low Yield:</strong> 20-25 bags/acre</li>
-                                <li><strong>Avg Yield:</strong> 30-35 bags/acre</li>
-                                <li><strong>High Yield:</strong> 40+ bags/acre</li>
-                            </ul>
-                        </>
-                    ) : (
-                        <>
-                            <p>Generate comprehensive PDF reports for sharing.</p>
-                            <ul className="list-disc list-inside space-y-1 opacity-80">
-                                <li>Water Level Trends (Chart)</li>
-                                <li>Min/Max/Avg Statistics</li>
-                                <li>Recent Telemetry Logs</li>
-                                <li>Sensor Health Status</li>
-                            </ul>
-                        </>
-                    )}
+    // Report Modal
+    if (showReportModal && reportSensor) {
+        return (
+            <div className="fixed inset-0 z-50 bg-white overflow-auto">
+                <div className="sticky top-0 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden">
+                    <h3 className="font-bold">Print Preview</h3>
+                    <div className="flex gap-3">
+                        <button onClick={handlePrint} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg font-bold text-sm transition-colors">
+                            <Printer size={16} /> Print / Save PDF
+                        </button>
+                        <button onClick={() => setShowReportModal(false)} className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg font-bold text-sm transition-colors">
+                            <X size={16} /> Close
+                        </button>
+                    </div>
+                </div>
+                <div className="p-8 bg-slate-100 min-h-screen print:bg-white print:p-0 print:min-h-0">
+                    <ReportTemplate sensor={reportSensor} logs={logs} dateRange="Last 30 Days" />
                 </div>
             </div>
-         </div>
-      </div>
-    </div>
-  );
+        );
+    }
+
+    return (
+        <div className="animate-in fade-in duration-300">
+            {/* Header */}
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    <Calculator className="text-emerald-600" /> Agri-Tools
+                </h2>
+                <p className="text-slate-500 text-sm mt-1">Calculators to optimize inputs and generate reports.</p>
+
+                <div className="flex flex-wrap gap-2 mt-4">
+                    <button
+                        onClick={() => setSelectedTool('fertilizer')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'fertilizer' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                        <Leaf size={16} /> Fertilizer Calc
+                    </button>
+                    <button
+                        onClick={() => setSelectedTool('yield')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'yield' ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                        <TrendingUp size={16} /> Yield Estimator
+                    </button>
+                    <button
+                        onClick={() => setSelectedTool('report')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedTool === 'report' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                        <FileBarChart size={16} /> Reports
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Input Section */}
+                <div className="lg:col-span-2">
+                    {selectedTool === 'fertilizer' && <FertilizerCalc sensors={sensors} />}
+                    {selectedTool === 'yield' && <YieldCalc sensors={sensors} />}
+                    {selectedTool === 'report' && (
+                        <ReportGenerator
+                            sensors={sensors}
+                            onGenerate={(sensor) => {
+                                setReportSensor(sensor);
+                                setShowReportModal(true);
+                            }}
+                        />
+                    )}
+                </div>
+
+                {/* Info Sidebar */}
+                <div className="lg:col-span-1">
+                    <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100">
+                        <h3 className="font-bold text-blue-900 flex items-center gap-2 mb-3">
+                            <Scale size={18} />
+                            {selectedTool === 'fertilizer' ? 'Standard Dosage' : selectedTool === 'yield' ? 'Yield Benchmarks' : 'Report Features'}
+                        </h3>
+                        <div className="text-sm text-blue-800 space-y-3">
+                            {selectedTool === 'fertilizer' ? (
+                                <>
+                                    <p>Recommendations based on standard NPK requirements for high-yield varieties.</p>
+                                    <ul className="list-disc list-inside space-y-1 opacity-80">
+                                        <li><strong>Basal:</strong> Before transplanting (DAP/MOP)</li>
+                                        <li><strong>Tillering:</strong> 15-20 Days (Urea)</li>
+                                        <li><strong>Panicle:</strong> 45-50 Days (Urea/MOP)</li>
+                                    </ul>
+                                </>
+                            ) : selectedTool === 'yield' ? (
+                                <>
+                                    <p>Estimations based on average panicle counts and grain weight.</p>
+                                    <ul className="list-disc list-inside space-y-1 opacity-80">
+                                        <li><strong>Low Yield:</strong> 20-25 bags/acre</li>
+                                        <li><strong>Avg Yield:</strong> 30-35 bags/acre</li>
+                                        <li><strong>High Yield:</strong> 40+ bags/acre</li>
+                                    </ul>
+                                </>
+                            ) : (
+                                <>
+                                    <p>Generate comprehensive PDF reports for sharing.</p>
+                                    <ul className="list-disc list-inside space-y-1 opacity-80">
+                                        <li>Water Level Trends (Chart)</li>
+                                        <li>Min/Max/Avg Statistics</li>
+                                        <li>Recent Telemetry Logs</li>
+                                        <li>Sensor Health Status</li>
+                                    </ul>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 const ReportGenerator: React.FC<{ sensors: SensorData[], onGenerate: (s: SensorData) => void }> = ({ sensors, onGenerate }) => {
@@ -137,7 +137,7 @@ const ReportGenerator: React.FC<{ sensors: SensorData[], onGenerate: (s: SensorD
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <h3 className="font-bold text-lg text-slate-800 mb-4">Generate Field Report</h3>
             <p className="text-sm text-slate-500 mb-6">Select a field to generate a detailed 30-day performance report suitable for printing or sharing.</p>
-            
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {sensors.map(sensor => (
                     <div key={sensor.id} className="border border-slate-200 rounded-xl p-4 hover:border-blue-400 transition-all cursor-pointer flex justify-between items-center group" onClick={() => onGenerate(sensor)}>
@@ -158,7 +158,7 @@ const ReportGenerator: React.FC<{ sensors: SensorData[], onGenerate: (s: SensorD
 const FertilizerCalc: React.FC<{ sensors: SensorData[] }> = ({ sensors }) => {
     const [acres, setAcres] = useState(1.0);
     const [stage, setStage] = useState('basal');
-    
+
     const handleSensorSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const id = e.target.value;
         if (!id) return;
@@ -168,11 +168,11 @@ const FertilizerCalc: React.FC<{ sensors: SensorData[] }> = ({ sensors }) => {
                 const config = JSON.parse(saved);
                 if (config.plotSizeAcres) setAcres(config.plotSizeAcres);
             }
-        } catch(err) {}
+        } catch (err) { }
     };
 
     const getDosage = () => {
-        switch(stage) {
+        switch (stage) {
             case 'basal': return { urea: 20, dap: 50, mop: 25 };
             case 'tillering': return { urea: 45, dap: 0, mop: 0 };
             case 'panicle': return { urea: 35, dap: 0, mop: 25 };
@@ -184,7 +184,7 @@ const FertilizerCalc: React.FC<{ sensors: SensorData[] }> = ({ sensors }) => {
     const ureaTotal = Math.ceil(dosage.urea * acres);
     const dapTotal = Math.ceil(dosage.dap * acres);
     const mopTotal = Math.ceil(dosage.mop * acres);
-    const cost = (ureaTotal * 6) + (dapTotal * 27) + (mopTotal * 17); 
+    const cost = (ureaTotal * 6) + (dapTotal * 27) + (mopTotal * 17);
 
     return (
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -233,10 +233,10 @@ const FertilizerCalc: React.FC<{ sensors: SensorData[] }> = ({ sensors }) => {
     );
 };
 
-const YieldCalc: React.FC<{ sensors: SensorData[] }> = ({ sensors }) => {
+const YieldCalc: React.FC<{ sensors: SensorData[] }> = () => {
     const [acres, setAcres] = useState(1.0);
     const [bagsPerAcre, setBagsPerAcre] = useState(30);
-    const bagWeight = 75; 
+    const bagWeight = 75;
     const totalKg = acres * bagsPerAcre * bagWeight;
     const totalTons = totalKg / 1000;
 
@@ -278,4 +278,3 @@ const ResultCard = ({ label, amount, color }: any) => (
         </div>
     </div>
 );
-    
