@@ -8,13 +8,15 @@ import { WaterLevelChart } from './components/WaterLevelChart';
 import { DataLogs } from './components/DataLogs';
 import { IrrigationAdvice } from './components/IrrigationAdvice';
 import { WeatherDashboard } from './components/WeatherDashboard';
-import { CropManager, calculateStage } from './components/CropManager';
+import { CropManager, calculateStage, CROP_STAGES } from './components/CropManager';
 import { AWDGauge } from './components/AWDGauge';
 import { PaddyVisual } from './components/PaddyVisual';
 import { AlertsDashboard } from './components/AlertsDashboard';
 import { SettingsDashboard } from './components/SettingsDashboard';
+import { AWDTracker, CriticalLevelBanner } from './components/AWDTracker';
+import { AWDProtocolGuide } from './components/AWDProtocolGuide';
 import { fetchLocalWeather, getUserLocation, WeatherData } from './services/weatherService';
-import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff, Wifi, Bell, Grab, Settings } from 'lucide-react';
+import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff, Wifi, Bell, Grab, Settings, Droplet } from 'lucide-react';
 import { LanguageProvider, useTranslation } from './services/translations';
 
 // Wrapper to provide Language Context
@@ -38,6 +40,7 @@ function App() {
   const [selectedSensor, setSelectedSensor] = useState<SensorData | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'weather' | 'alerts' | 'settings'>('dashboard');
+  const [detailTab, setDetailTab] = useState<'overview' | 'crop' | 'awd' | 'guide' | 'telemetry'>('overview');
   const [isRearranging, setIsRearranging] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
 
@@ -111,7 +114,7 @@ function App() {
     }
   };
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     if (!isRearranging) setLoading(true);
     setError(null);
 
@@ -127,12 +130,31 @@ function App() {
             if (settings[devId].notes) {
               localStorage.setItem(`notes_${devId}`, settings[devId].notes);
             }
+            // ── AWD drain events (cloud-first) ──────────────────────────
+            if (settings[devId].awdEvents) {
+              localStorage.setItem(`awd_events_${devId}`, JSON.stringify(settings[devId].awdEvents));
+            }
+            // ── Soil type selection ─────────────────────────────────────
+            if (settings[devId].soilType) {
+              localStorage.setItem(`soilType_${devId}`, settings[devId].soilType);
+            }
           });
+
+          // ── Restore shared field location from cloud ──────────────────────
+          // Cloud location takes priority over any per-device localStorage value
+          const cloudLoc = settings['field']?.location;
+          if (cloudLoc?.lat && cloudLoc?.lon) {
+            // Persist locally so refresh works offline too
+            localStorage.setItem('fieldLocation', JSON.stringify(cloudLoc));
+            // Fetch weather with the cloud-stored coordinates
+            fetchAndSetWeather(cloudLoc.lat, cloudLoc.lon, false, cloudLoc.name);
+          }
+
           setConfigVersion(v => v + 1);
         }
       });
 
-      const data = await fetchSensorData();
+      const data = await fetchSensorData(forceRefresh);
 
       if (data.sensors.length > 0) {
         localStorage.setItem('sensor_cache', JSON.stringify({
@@ -178,7 +200,8 @@ function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 60000);
+    // Poll every 60s, but fetchSensorData will serve cache if data is still fresh
+    const interval = setInterval(() => loadData(false), 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -206,6 +229,7 @@ function App() {
       if (overrideName) {
         finalName = overrideName;
       } else if (!save) {
+        // Prefer the stored name (cloud or local) over the auto-geocoded name
         const saved = localStorage.getItem('fieldLocation');
         if (saved) {
           const parsed = JSON.parse(saved);
@@ -214,8 +238,13 @@ function App() {
       }
       const weatherDataWithCorrectName = { ...data, locationName: finalName };
       setWeather(weatherDataWithCorrectName);
-      if (save || overrideName) {
-        localStorage.setItem('fieldLocation', JSON.stringify({ lat, lon, name: finalName }));
+
+      // Always save locally so refresh/offline works
+      localStorage.setItem('fieldLocation', JSON.stringify({ lat, lon, name: finalName }));
+
+      // Push to cloud whenever we are explicitly saving a new location
+      if (save) {
+        saveCloudSetting('field', 'location', { lat, lon, name: finalName });
       }
     } catch (e) {
       console.error("Weather Fetch Error", e);
@@ -238,6 +267,10 @@ function App() {
     }
   };
 
+  const handleManualLocation = async (lat: number, lon: number, name?: string) => {
+    await fetchAndSetWeather(lat, lon, true, name);
+  };
+
   const handleRefreshWeather = async () => {
     const saved = localStorage.getItem('fieldLocation');
     if (saved) {
@@ -254,8 +287,11 @@ function App() {
     setWeather(updated);
     const saved = localStorage.getItem('fieldLocation');
     if (saved) {
-      const data = JSON.parse(saved);
-      localStorage.setItem('fieldLocation', JSON.stringify({ ...data, name: newName }));
+      const locData = JSON.parse(saved);
+      const updatedLoc = { ...locData, name: newName };
+      localStorage.setItem('fieldLocation', JSON.stringify(updatedLoc));
+      // Sync the renamed location to cloud so all devices see the new name
+      saveCloudSetting('field', 'location', updatedLoc);
     }
   };
 
@@ -489,7 +525,7 @@ function App() {
                 </button>
 
                 <button
-                  onClick={loadData}
+                  onClick={() => loadData(true)}
                   className={`p-2 rounded-full hover:bg-slate-100 border border-slate-200 hover:border-slate-300 hover:text-emerald-600 transition-all ${loading ? 'animate-spin text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-slate-500'}`}
                   title={t('btn.refresh')}
                 >
@@ -546,7 +582,7 @@ function App() {
               <p className="font-bold text-sm text-red-900">Sync Error</p>
               <p className="text-xs text-red-700 mt-0.5">{error}</p>
             </div>
-            <button onClick={loadData} className="px-4 py-2 bg-white border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-red-50 shadow-sm">Retry</button>
+            <button onClick={() => loadData(true)} className="px-4 py-2 bg-white border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-red-50 shadow-sm">Retry</button>
           </div>
         )}
 
@@ -559,7 +595,7 @@ function App() {
               <p className="font-bold text-sm text-amber-900">Offline Mode</p>
               <p className="text-xs text-amber-700 mt-0.5">Displaying cached data from {lastRefreshed.toLocaleString()}. Live updates paused.</p>
             </div>
-            <button onClick={loadData} className="px-4 py-2 bg-white border border-amber-200 text-amber-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-amber-50 shadow-sm">Retry</button>
+            <button onClick={() => loadData(true)} className="px-4 py-2 bg-white border border-amber-200 text-amber-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-amber-50 shadow-sm">Retry</button>
           </div>
         )}
 
@@ -568,6 +604,7 @@ function App() {
             weather={weather}
             loading={weatherLoading}
             error={weatherError}
+            onManualLocation={handleManualLocation}
             onRefresh={handleRefreshWeather}
             onUpdateLocation={handleUpdateLocation}
             onLocationNameChange={handleLocationNameChange}
@@ -610,18 +647,21 @@ function App() {
               Back to Overview
             </button>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-start gap-6 bg-gradient-to-b from-white to-slate-50/50">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2 min-h-[44px]">
+            {/* ── SENSOR DETAIL — TABBED LAYOUT ──────────────────── */}
+            {/* Hero Header */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-4">
+              <div className="p-5 md:p-6 bg-gradient-to-br from-slate-50 to-white border-b border-slate-100">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  {/* Name + badges */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-2 min-h-[38px]">
                       {editingNameId === selectedSensor.id ? (
                         <div className="flex items-center gap-2 w-full max-w-md animate-in fade-in" onClick={e => e.stopPropagation()}>
                           <input
                             type="text"
                             value={tempName}
                             onChange={e => setTempName(e.target.value)}
-                            className="text-2xl font-bold text-slate-900 border-b-2 border-emerald-500 focus:outline-none bg-white/50 w-full px-1"
+                            className="text-2xl font-bold text-slate-900 border-b-2 border-emerald-500 focus:outline-none bg-transparent w-full px-1"
                             autoFocus
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') handleSaveName(e, selectedSensor.id);
@@ -629,46 +669,42 @@ function App() {
                             }}
                             onClick={e => e.stopPropagation()}
                           />
-                          <button onClick={(e) => handleSaveName(e, selectedSensor.id)} className="p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 shrink-0"><Check size={20} /></button>
-                          <button onClick={(e) => handleCancelEdit(e)} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 shrink-0"><X size={20} /></button>
+                          <button onClick={(e) => handleSaveName(e, selectedSensor.id)} className="p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 shrink-0"><Check size={18} /></button>
+                          <button onClick={(e) => handleCancelEdit(e)} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 shrink-0"><X size={18} /></button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-3 group/title">
-                          <h2 className="text-3xl font-bold text-slate-900 tracking-tight cursor-pointer hover:text-emerald-700 transition-colors" onClick={(e) => handleEditName(e, selectedSensor)} title="Click to rename">
-                            {selectedSensor.name}
-                          </h2>
-                          <button onClick={(e) => handleEditName(e, selectedSensor)} className="opacity-0 group-hover/title:opacity-100 text-slate-300 hover:text-blue-600 transition-all p-1.5 rounded-lg hover:bg-slate-100" title="Rename Field"><Edit2 size={18} /></button>
+                        <div className="flex items-center gap-2 group/title">
+                          <h2 className="text-2xl font-bold text-slate-900 tracking-tight cursor-pointer hover:text-emerald-700 transition-colors" onClick={(e) => handleEditName(e, selectedSensor)}>{selectedSensor.name}</h2>
+                          <button onClick={(e) => handleEditName(e, selectedSensor)} className="opacity-0 group-hover/title:opacity-100 text-slate-300 hover:text-blue-600 transition-all p-1.5 rounded-lg hover:bg-slate-100"><Edit2 size={15} /></button>
                           <StatusBadge status={selectedSensor.status} />
                         </div>
                       )}
                     </div>
-
-                    <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
                       {(() => {
-                        const isLora = isDeviceType(selectedSensor, 'lora');
-                        const isWifi = isDeviceType(selectedSensor, 'wifi');
-                        return (
-                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${isLora ? 'bg-indigo-100 text-indigo-700 border-indigo-100' : isWifi ? 'bg-sky-100 text-sky-700 border-sky-100' : 'bg-orange-100 text-orange-700 border-orange-100'}`}>
-                            {isLora ? <Radio size={12} /> : isWifi ? <Wifi size={12} /> : <Smartphone size={12} />}
+                        const isLora = isDeviceType(selectedSensor, 'lora'); const isWifi = isDeviceType(selectedSensor, 'wifi'); return (
+                          <span className={`flex items-center gap-1 px-2 py-0.5 rounded font-semibold border ${isLora ? 'bg-indigo-100 text-indigo-700 border-indigo-100' : isWifi ? 'bg-sky-100 text-sky-700 border-sky-100' : 'bg-orange-100 text-orange-700 border-orange-100'}`}>
+                            {isLora ? <Radio size={11} /> : isWifi ? <Wifi size={11} /> : <Smartphone size={11} />}
                             {isLora ? 'LoRa' : isWifi ? 'WiFi' : 'GSM'}
-                          </div>
+                          </span>
                         );
                       })()}
-                      <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-xs border border-slate-200">{selectedSensor.id}</span>
-                      <span className="flex items-center gap-1.5"><Clock size={14} className="text-slate-400" />Updated {getTimeAgo(selectedSensor.lastUpdated)}</span>
+                      <span className="font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{selectedSensor.id}</span>
+                      <span className="flex items-center gap-1"><Clock size={12} className="text-slate-400" />Updated {getTimeAgo(selectedSensor.lastUpdated)}</span>
                     </div>
                   </div>
 
-                  <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-6">
-                    <div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{t('water.level')}</div>
+                  {/* Water level + advice */}
+                  <div className="flex items-center gap-5 bg-white rounded-xl border border-slate-100 shadow-sm px-5 py-3">
+                    <div className="text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">Water Level</p>
                       <div className="flex items-baseline gap-1">
-                        <span className="text-4xl font-bold text-slate-900 tracking-tighter">{selectedSensor.currentLevel}</span>
-                        <span className="text-lg font-medium text-slate-400">{t('unit.cm')}</span>
+                        <span className="text-3xl font-black text-slate-900">{selectedSensor.currentLevel}</span>
+                        <span className="text-sm text-slate-400 font-semibold">cm</span>
                       </div>
                     </div>
-                    <div className="hidden sm:block h-10 w-px bg-slate-100"></div>
-                    <div className="sm:min-w-[200px]">
+                    <div className="w-px h-10 bg-slate-100" />
+                    <div>
                       <IrrigationAdvice
                         level={selectedSensor.currentLevel}
                         weather={weather}
@@ -676,42 +712,91 @@ function App() {
                         plotName={selectedSensor.name}
                       />
                       {weather && weather.isRainy && (
-                        <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                          <CloudRain size={12} /> Rain Forecast: {weather.rainForecast24h}mm
+                        <div className="mt-1 flex items-center gap-1 text-xs text-blue-600 font-medium">
+                          <CloudRain size={11} /> Rain: {weather.rainForecast24h}mm
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
-
-                <div className="p-6 md:p-8">
-                  <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2"><Zap size={16} className="text-amber-500" />Field Water History</h3>
-                  <WaterLevelChart data={selectedSensor.history} />
-                </div>
               </div>
 
-              <div className="lg:col-span-1">
+              {/* Tab bar */}
+              <div className="flex overflow-x-auto border-b border-slate-100 bg-white">
+                {([
+                  { id: 'overview', label: 'Overview', icon: Zap },
+                  { id: 'crop', label: 'Crop Status', icon: Sprout },
+                  { id: 'awd', label: 'AWD Tracker', icon: Droplet },
+                  { id: 'guide', label: 'Protocol Guide', icon: FileText },
+                  { id: 'telemetry', label: 'Telemetry', icon: Radio },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setDetailTab(tab.id)}
+                    className={`flex items-center gap-1.5 px-4 py-3 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${detailTab === tab.id
+                      ? 'border-emerald-500 text-emerald-600 bg-emerald-50/40'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                      }`}
+                  >
+                    <tab.icon size={13} />{tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tab content */}
+            <div className="animate-in fade-in duration-200">
+              {detailTab === 'overview' && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="p-6 md:p-8">
+                    <h3 className="text-sm font-bold text-slate-800 mb-5 flex items-center gap-2"><Zap size={15} className="text-amber-500" />Field Water History</h3>
+                    <WaterLevelChart data={selectedSensor.history} />
+                  </div>
+                </div>
+              )}
+
+              {detailTab === 'crop' && (
                 <CropManager
                   sensorId={selectedSensor.id}
                   weather={weather}
                   onSave={() => {
                     const config = localStorage.getItem(`crop_${selectedSensor.id}`);
-                    if (config) {
-                      saveCloudSetting(selectedSensor.id, 'cropConfig', JSON.parse(config));
-                    }
-                    setConfigVersion(v => v + 1)
+                    if (config) saveCloudSetting(selectedSensor.id, 'cropConfig', JSON.parse(config));
+                    setConfigVersion(v => v + 1);
                   }}
                 />
-              </div>
-            </div>
+              )}
 
-            <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 md:p-8">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><FileText size={14} />Node Telemetry</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <DetailCard label="Last Received" value={formatDateTime(selectedSensor.raw["Gateway Received Time"])} />
-                <DetailCard label="Batch Upload" value={formatDateTime(selectedSensor.raw["Batch Upload Time"])} />
-                <DetailCard label="Signal Quality" value={`${selectedSensor.raw["GSM Strength (RSSI)"] || selectedSensor.raw["WiFi Strength (dBm)"] || '-'} ${isDeviceType(selectedSensor, 'wifi') ? 'dBm' : 'CSQ'}`} />
-              </div>
+              {detailTab === 'awd' && (
+                <AWDTracker
+                  sensorId={selectedSensor.id}
+                  sensorName={selectedSensor.name}
+                  currentLevel={selectedSensor.currentLevel}
+                  history={selectedSensor.history}
+                  awdEvents={cloudSettings[selectedSensor.id]?.awdEvents}
+                />
+              )}
+
+              {detailTab === 'guide' && (
+                <AWDProtocolGuide
+                  transplantDate={(() => { try { const c = localStorage.getItem(`crop_${selectedSensor.id}`); return c ? JSON.parse(c).transplantDate ?? '' : ''; } catch { return ''; } })()}
+                  currentLevel={selectedSensor.currentLevel}
+                  weather={weather}
+                  sensorId={selectedSensor.id}
+                  cloudSoilType={cloudSettings[selectedSensor.id]?.soilType}
+                />
+              )}
+
+              {detailTab === 'telemetry' && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><FileText size={14} />Node Telemetry</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <DetailCard label="Last Received" value={formatDateTime(selectedSensor.raw["Gateway Received Time"])} />
+                    <DetailCard label="Batch Upload" value={formatDateTime(selectedSensor.raw["Batch Upload Time"])} />
+                    <DetailCard label="Signal Quality" value={`${selectedSensor.raw["GSM Strength (RSSI)"] || selectedSensor.raw["WiFi Strength (dBm)"] || '-'} ${isDeviceType(selectedSensor, 'wifi') ? 'dBm' : 'CSQ'}`} />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -795,6 +880,11 @@ function App() {
                 <button onClick={() => setDashboardFilter('gsm')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'gsm' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}><Smartphone size={12} /> {t('filter.gsm')}</button>
                 <button onClick={() => setDashboardFilter('wifi')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${dashboardFilter === 'wifi' ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}><Wifi size={12} /> {t('filter.wifi')}</button>
               </div>
+            )}
+
+            {/* ── Critical Level Banner (shows if any sensor ≤ 10 cm) ── */}
+            {activeTab === 'dashboard' && !isRearranging && (
+              <CriticalLevelBanner sensors={filteredSensors} />
             )}
 
             {activeTab === 'dashboard' && (
@@ -926,7 +1016,51 @@ function App() {
                         </div>
                       )}
 
-                      {/* Irrigation Advice */}
+                      {/* ── Water Level Slots ── */}
+                      {(() => {
+                        const stageData = cropInfo ? CROP_STAGES[Math.min(cropInfo.stageIndex, CROP_STAGES.length - 1)] : null;
+                        const target = stageData?.gaugeTarget ?? '—';
+                        const cur = sensor.currentLevel;
+                        // Determine if current level looks OK (very rough: within ±3 cm of midpoint estimate)
+                        const isOk = stageData
+                          ? (() => {
+                            // Parse a rough midpoint from the gaugeTarget string
+                            const nums = target.match(/(\d+)/g);
+                            if (!nums) return true;
+                            const mid = nums.length === 1 ? Number(nums[0]) : (Number(nums[0]) + Number(nums[nums.length - 1])) / 2;
+                            return Math.abs(cur - mid) <= 4;
+                          })()
+                          : true;
+                        return (
+                          <div className="grid grid-cols-2 gap-2 mb-4">
+                            {/* Slot 1 — Current Level */}
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 flex flex-col gap-0.5">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                                <Droplet size={9} /> Current
+                              </span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-xl font-black text-slate-800 leading-none">{cur}</span>
+                                <span className="text-xs font-semibold text-slate-400">cm</span>
+                              </div>
+                            </div>
+                            {/* Slot 2 — Stage Target */}
+                            <div className={`rounded-xl border px-3 py-2 flex flex-col gap-0.5 ${isOk
+                              ? 'border-emerald-100 bg-emerald-50'
+                              : 'border-amber-100 bg-amber-50'
+                              }`}>
+                              <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${isOk ? 'text-emerald-500' : 'text-amber-500'
+                                }`}>
+                                <Sprout size={9} /> Stage Target
+                              </span>
+                              <span className={`text-xs font-black leading-tight ${isOk ? 'text-emerald-700' : 'text-amber-700'
+                                }`}>
+                                {stageData ? target : '—'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       <IrrigationAdvice
                         level={sensor.currentLevel}
                         weather={weather}

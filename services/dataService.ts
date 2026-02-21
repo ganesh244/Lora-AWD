@@ -1,6 +1,11 @@
 
 import { SheetRow, SensorData, GatewayStatus } from '../types';
 
+// --- CACHING CONSTANTS ---
+// How many ms of cached data is considered "fresh" (default: 2 minutes).
+// Increase this value to make the app hit the API less frequently.
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 // --- DATA CONFIGURATION ---
 const DEFAULT_DATA_SOURCES = [
   // 1. Original LoRa Gateway Sheet (Primary for Settings)
@@ -187,7 +192,45 @@ const isValidDeviceId = (id: string): boolean => {
 };
 // -------------------------
 
-export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+// In-flight request deduplication: if a fetch is already in progress, wait for it
+let _fetchInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> | null = null;
+
+export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+  // --- SMART CACHE CHECK ---
+  // If we have fresh cached data and aren't forcing a refresh, return it immediately.
+  // This prevents redundant API calls on every page load / tab switch.
+  if (!forceRefresh) {
+    try {
+      const cached = localStorage.getItem('sensor_cache');
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+        if (age < CACHE_TTL_MS) {
+          console.log(`[dataService] Returning cached data (${Math.round(age / 1000)}s old, TTL ${CACHE_TTL_MS / 1000}s)`);
+          return data;
+        }
+      }
+    } catch (e) {
+      // Cache read failed — fall through to live fetch
+    }
+  }
+
+  // Deduplicate concurrent fetches (e.g. two useEffect triggers at startup)
+  if (_fetchInFlight) {
+    console.log('[dataService] Deduplicating concurrent fetch request');
+    return _fetchInFlight;
+  }
+
+  _fetchInFlight = _doFetchSensorData();
+  try {
+    const result = await _fetchInFlight;
+    return result;
+  } finally {
+    _fetchInFlight = null;
+  }
+};
+
+const _doFetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
   try {
     const activeSources = getActiveDataSources().filter(url => url && url.trim().length > 0 && url.startsWith('http'));
 
@@ -197,11 +240,11 @@ export const fetchSensorData = async (): Promise<{ sensors: SensorData[], gatewa
     }
 
     // Fetch from all sources in parallel
+    // NOTE: No nocache= timestamp so Google's CDN can cache the response and
+    // reduce Apps Script execution quota usage.
     const fetchPromises = activeSources.map(async (url) => {
       try {
-        // Check if URL already has query params to append nocache correctly
-        const separator = url.includes('?') ? '&' : '?';
-        const response = await fetch(`${url}${separator}nocache=${Date.now()}`, {
+        const response = await fetch(url, {
           method: 'GET',
           credentials: 'omit',
           redirect: 'follow'
