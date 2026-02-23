@@ -161,10 +161,39 @@ function App() {
       const data = await fetchSensorData(forceRefresh);
 
       if (data.sensors.length > 0) {
-        localStorage.setItem('sensor_cache', JSON.stringify({
-          timestamp: Date.now(),
-          data
-        }));
+        // Slim the cache: keep only the last 48 history points per sensor
+        // (≈24h at 30-min intervals) so we stay well under the 5MB localStorage limit.
+        // Full history is fetched on demand by the chart when user picks 30d/Max/Custom.
+        const slimData = {
+          ...data,
+          sensors: data.sensors.map(s => ({
+            ...s,
+            history: s.history.slice(-48)
+          })),
+          // Logs are the biggest part — keep only the most recent 500 rows for offline fallback
+          logs: data.logs.slice(0, 500)
+        };
+
+        try {
+          localStorage.setItem('sensor_cache', JSON.stringify({
+            timestamp: Date.now(),
+            data: slimData
+          }));
+        } catch (quotaErr) {
+          // localStorage is full — evict full-history and cloud caches then retry once
+          console.warn('[cache] Quota exceeded, clearing old caches and retrying…', quotaErr);
+          try {
+            localStorage.removeItem('sensor_cache_full');
+            localStorage.removeItem('cloud_settings_cache');
+            localStorage.setItem('sensor_cache', JSON.stringify({
+              timestamp: Date.now(),
+              data: slimData
+            }));
+          } catch (retryErr) {
+            // Still full — skip caching entirely, data is already in React state
+            console.warn('[cache] Retry also failed, running without cache', retryErr);
+          }
+        }
 
         processAndSetData(data);
         setLastRefreshed(new Date());
