@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { fetchSensorData, parseDate, formatDateTime, mapDeviceNickname, fetchCloudSettings, saveCloudSetting } from './services/dataService';
+import { fetchSensorData, fetchSensorDataExtended, parseDate, formatDateTime, mapDeviceNickname, fetchCloudSettings, saveCloudSetting } from './services/dataService';
 import { SensorData, GatewayStatus, SheetRow } from './types';
 import { StatusBadge } from './components/StatusBadge';
 import { SystemHealth } from './components/SystemHealth';
@@ -43,6 +43,10 @@ function App() {
   const [detailTab, setDetailTab] = useState<'overview' | 'crop' | 'awd' | 'guide' | 'telemetry'>('overview');
   const [isRearranging, setIsRearranging] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
+
+  // Full-history lazy loading (per sensor, triggered by chart range selection)
+  const [fullHistorySensors, setFullHistorySensors] = useState<Set<string>>(new Set());
+  const [loadingFullHistorySensors, setLoadingFullHistorySensors] = useState<Set<string>>(new Set());
 
   // Drag and Drop State
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -200,10 +204,47 @@ function App() {
 
   useEffect(() => {
     loadData();
-    // Poll every 60s, but fetchSensorData will serve cache if data is still fresh
-    const interval = setInterval(() => loadData(false), 60000);
+    // Poll every 5 minutes. fetchSensorData also has a 10-min cache TTL,
+    // so live fetches only happen when the cache is stale — this prevents
+    // Google Apps Script quota exhaustion across multiple concurrent devices.
+    const interval = setInterval(() => loadData(false), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Lazy-load full history for a specific sensor when the user requests
+  // an extended chart range (30d / Max / Custom).
+  const handleRequestFullHistory = async (sensorId: string) => {
+    if (fullHistorySensors.has(sensorId) || loadingFullHistorySensors.has(sensorId)) return;
+
+    setLoadingFullHistorySensors(prev => new Set(prev).add(sensorId));
+    try {
+      const fullData = await fetchSensorDataExtended();
+
+      // Persist full history — evict the 10-day cache first so both don't
+      // coexist and breach the browser's 5 MB localStorage limit.
+      try {
+        localStorage.removeItem('sensor_cache');
+        localStorage.setItem('sensor_cache_full', JSON.stringify({ timestamp: Date.now(), data: fullData }));
+      } catch (storageErr) {
+        console.warn('Could not persist full history cache (storage full)', storageErr);
+      }
+
+      // Merge extended history into the matching sensor in state
+      const fullSensor = fullData.sensors.find(s => s.id === sensorId);
+      if (fullSensor) {
+        setSensors(prev => prev.map(s => s.id === sensorId ? { ...s, history: fullSensor.history } : s));
+        if (selectedSensor?.id === sensorId) {
+          setSelectedSensor(prev => prev ? { ...prev, history: fullSensor.history } : null);
+        }
+      }
+
+      setFullHistorySensors(prev => new Set(prev).add(sensorId));
+    } catch (err) {
+      console.error('Failed to load full history', err);
+    } finally {
+      setLoadingFullHistorySensors(prev => { const s = new Set(prev); s.delete(sensorId); return s; });
+    }
+  };
 
   useEffect(() => {
     const saved = localStorage.getItem('fieldLocation');
@@ -750,7 +791,12 @@ function App() {
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="p-6 md:p-8">
                     <h3 className="text-sm font-bold text-slate-800 mb-5 flex items-center gap-2"><Zap size={15} className="text-amber-500" />Field Water History</h3>
-                    <WaterLevelChart data={selectedSensor.history} />
+                    <WaterLevelChart
+                      data={selectedSensor.history}
+                      hasFullHistory={fullHistorySensors.has(selectedSensor.id)}
+                      isLoadingFullHistory={loadingFullHistorySensors.has(selectedSensor.id)}
+                      onRequestFullHistory={() => handleRequestFullHistory(selectedSensor.id)}
+                    />
                   </div>
                 </div>
               )}

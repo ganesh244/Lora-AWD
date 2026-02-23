@@ -2,9 +2,10 @@
 import { SheetRow, SensorData, GatewayStatus } from '../types';
 
 // --- CACHING CONSTANTS ---
-// How many ms of cached data is considered "fresh" (default: 2 minutes).
-// Increase this value to make the app hit the API less frequently.
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+// Default (10-day) data cache: 10 minutes
+const CACHE_TTL_MS = 10 * 60 * 1000;
+// Full history cache: 30 minutes (fetched lazily per-sensor)
+const FULL_HISTORY_CACHE_TTL_MS = 30 * 60 * 1000;
 
 // --- DATA CONFIGURATION ---
 const DEFAULT_DATA_SOURCES = [
@@ -192,45 +193,51 @@ const isValidDeviceId = (id: string): boolean => {
 };
 // -------------------------
 
-// In-flight request deduplication: if a fetch is already in progress, wait for it
+// In-flight request deduplication
 let _fetchInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> | null = null;
+let _fetchFullInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> | null = null;
 
+// Default fetch — last 10 days only (quota-friendly)
 export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
-  // --- SMART CACHE CHECK ---
-  // If we have fresh cached data and aren't forcing a refresh, return it immediately.
-  // This prevents redundant API calls on every page load / tab switch.
   if (!forceRefresh) {
     try {
       const cached = localStorage.getItem('sensor_cache');
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
-        const age = Date.now() - timestamp;
-        if (age < CACHE_TTL_MS) {
-          console.log(`[dataService] Returning cached data (${Math.round(age / 1000)}s old, TTL ${CACHE_TTL_MS / 1000}s)`);
+        if (Date.now() - timestamp < CACHE_TTL_MS) {
+          console.log(`[dataService] Returning 10-day cache`);
           return data;
         }
       }
-    } catch (e) {
-      // Cache read failed — fall through to live fetch
-    }
+    } catch (e) { /* fall through */ }
   }
 
-  // Deduplicate concurrent fetches (e.g. two useEffect triggers at startup)
-  if (_fetchInFlight) {
-    console.log('[dataService] Deduplicating concurrent fetch request');
-    return _fetchInFlight;
-  }
-
-  _fetchInFlight = _doFetchSensorData();
-  try {
-    const result = await _fetchInFlight;
-    return result;
-  } finally {
-    _fetchInFlight = null;
-  }
+  if (_fetchInFlight) return _fetchInFlight;
+  _fetchInFlight = _doFetchSensorData(10);
+  try { return await _fetchInFlight; } finally { _fetchInFlight = null; }
 };
 
-const _doFetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+// Extended fetch — all historical data, triggered on-demand by chart
+export const fetchSensorDataExtended = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+  if (!forceRefresh) {
+    try {
+      const cached = localStorage.getItem('sensor_cache_full');
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        if (Date.now() - timestamp < FULL_HISTORY_CACHE_TTL_MS) {
+          console.log(`[dataService] Returning full-history cache`);
+          return data;
+        }
+      }
+    } catch (e) { /* fall through */ }
+  }
+
+  if (_fetchFullInFlight) return _fetchFullInFlight;
+  _fetchFullInFlight = _doFetchSensorData(0); // 0 = all days
+  try { return await _fetchFullInFlight; } finally { _fetchFullInFlight = null; }
+};
+
+const _doFetchSensorData = async (days = 10): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
   try {
     const activeSources = getActiveDataSources().filter(url => url && url.trim().length > 0 && url.startsWith('http'));
 
@@ -239,10 +246,17 @@ const _doFetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: G
       return { sensors: [], gateway: getDefaultGateway(), logs: [] };
     }
 
-    // Fetch from all sources in parallel
-    // NOTE: No nocache= timestamp so Google's CDN can cache the response and
-    // reduce Apps Script execution quota usage.
-    const fetchPromises = activeSources.map(async (url) => {
+    // Build URLs — append ?days=N for server-side date filtering.
+    // days=0 means fetch everything (used by fetchSensorDataExtended).
+    const sourcesWithDays = activeSources.map(url => {
+      if (days > 0) {
+        const sep = url.includes('?') ? '&' : '?';
+        return `${url}${sep}days=${days}`;
+      }
+      return url;
+    });
+
+    const fetchPromises = sourcesWithDays.map(async (url) => {
       try {
         const response = await fetch(url, {
           method: 'GET',
@@ -256,11 +270,34 @@ const _doFetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: G
         }
 
         const contentType = response.headers.get('content-type');
+
+        // Google Apps Script returns HTML when quota is exceeded (content-type: text/html)
+        // Detect this case and throw so the caller falls back to cache.
         if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text().catch(() => '');
+          if (
+            text.includes('exceeded') ||
+            text.includes('quota') ||
+            text.includes('Service invoked too many times')
+          ) {
+            throw new Error('The quota has been exceeded. Showing cached data.');
+          }
           return [];
         }
 
         const data = await response.json();
+
+        // Apps Script can also return a JSON error object when quota is hit
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const errMsg = data.error || data.message || '';
+          if (
+            typeof errMsg === 'string' &&
+            (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('exceeded'))
+          ) {
+            throw new Error('The quota has been exceeded. Showing cached data.');
+          }
+        }
+
         if (Array.isArray(data)) return data;
         if (data && typeof data === 'object') {
           if (data.data && Array.isArray(data.data)) return data.data;
@@ -269,7 +306,11 @@ const _doFetchSensorData = async (): Promise<{ sensors: SensorData[], gateway: G
           return [];
         }
         return [];
-      } catch (error) {
+      } catch (error: any) {
+        // Re-throw quota errors so the main handler can fall back to cache
+        if (error?.message?.includes('quota') || error?.message?.includes('exceeded')) {
+          throw error;
+        }
         console.warn(`Failed to fetch from source: ${url}`, error);
         return [];
       }
