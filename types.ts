@@ -10,7 +10,9 @@ export interface SheetRow {
   "SIM Operator": string;
   "WiFi Strength (dBm)": number | string;
   "GSM Strength (CSQ)": number | string;
+  "GSM Strength (RSSI)"?: number | string; // legacy — kept for rows written before v5.0 script
   "SD Free (MB)": number | string;
+  "Source"?: string; // v5.0+
 }
 
 export interface SensorData {

@@ -430,7 +430,8 @@ const _doFetchSensorData = async (days = 10): Promise<{ sensors: SensorData[], g
       network: latestGatewayRow["Network"] || "Offline",
       simOperator: latestGatewayRow["SIM Operator"] || "N/A",
       wifiSignal: String(latestGatewayRow["WiFi Strength (dBm)"] || "0"),
-      gsmSignal: String(latestGatewayRow["GSM Strength (CSQ)"] || "0"),
+      // Support both old (RSSI) and new (CSQ) column header names for backward compat
+      gsmSignal: String(latestGatewayRow["GSM Strength (CSQ)"] || latestGatewayRow["GSM Strength (RSSI)"] || "0"),
       sdFree: String(latestGatewayRow["SD Free (MB)"] || "0"),
       lastBatchUpload: latestGatewayRow["Batch Upload Time"] || latestGatewayRow["Gateway Received Time"] || "N/A",
       source: latestGatewayRow["Device ID"] // Track which device provided this status
