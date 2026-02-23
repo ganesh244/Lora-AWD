@@ -482,7 +482,7 @@ function App() {
         network: latest["Network"] || "Unknown",
         simOperator: latest["SIM Operator"] || "-",
         wifiSignal: String(latest["WiFi Strength (dBm)"] || "0"),
-        gsmSignal: String(latest["GSM Strength (RSSI)"] || "0"),
+        gsmSignal: String(latest["GSM Strength (CSQ)"] || "0"),
         sdFree: String(latest["SD Free (MB)"] || "0"),
         lastBatchUpload: latest["Batch Upload Time"] || latest["Gateway Received Time"] || "N/A",
         source: latest["Device ID"]
@@ -839,7 +839,7 @@ function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <DetailCard label="Last Received" value={formatDateTime(selectedSensor.raw["Gateway Received Time"])} />
                     <DetailCard label="Batch Upload" value={formatDateTime(selectedSensor.raw["Batch Upload Time"])} />
-                    <DetailCard label="Signal Quality" value={`${selectedSensor.raw["GSM Strength (RSSI)"] || selectedSensor.raw["WiFi Strength (dBm)"] || '-'} ${isDeviceType(selectedSensor, 'wifi') ? 'dBm' : 'CSQ'}`} />
+                    <DetailCard label="Signal Quality" value={`${selectedSensor.raw["GSM Strength (CSQ)"] || selectedSensor.raw["WiFi Strength (dBm)"] || '-'} ${isDeviceType(selectedSensor, 'wifi') ? 'dBm' : 'CSQ'}`} />
                   </div>
                 </div>
               )}

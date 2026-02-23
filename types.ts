@@ -9,7 +9,7 @@ export interface SheetRow {
   "Batch Upload Time": string;
   "SIM Operator": string;
   "WiFi Strength (dBm)": number | string;
-  "GSM Strength (RSSI)": number | string;
+  "GSM Strength (CSQ)": number | string;
   "SD Free (MB)": number | string;
 }
 
