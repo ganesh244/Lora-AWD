@@ -222,9 +222,11 @@ export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: 
         }
       }
     } catch (e) { /* fall through */ }
+
+    if (_fetchInFlight) return _fetchInFlight;
   }
 
-  if (_fetchInFlight) return _fetchInFlight;
+  // forceRefresh completely replaces the flight promise to ensure immediate real-time network requests
   _fetchInFlight = _doFetchSensorData(10);
   try { return await _fetchInFlight; } finally { _fetchInFlight = null; }
 };
@@ -242,9 +244,11 @@ export const fetchSensorDataExtended = async (forceRefresh = false): Promise<{ s
         }
       }
     } catch (e) { /* fall through */ }
+
+    if (_fetchFullInFlight) return _fetchFullInFlight;
   }
 
-  if (_fetchFullInFlight) return _fetchFullInFlight;
+  // forceRefresh completely replaces the flight promise to ensure immediate real-time network requests
   _fetchFullInFlight = _doFetchSensorData(0); // 0 = all days
   try { return await _fetchFullInFlight; } finally { _fetchFullInFlight = null; }
 };
