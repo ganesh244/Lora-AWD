@@ -54,7 +54,8 @@ export const fetchCloudSettings = async () => {
     if (!url) return null;
     // Handle potential query params in URL
     const separator = url.includes('?') ? '&' : '?';
-    const response = await fetch(`${url}${separator}action=getSettings`);
+    const finalUrl = `${url}${separator}action=getSettings&_t=${Date.now()}`;
+    const response = await fetch(finalUrl, { cache: 'no-store' });
     if (!response.ok) return null;
     return await response.json();
   } catch (e) {
@@ -249,11 +250,14 @@ const _doFetchSensorData = async (days = 10): Promise<{ sensors: SensorData[], g
     // Build URLs — append ?days=N for server-side date filtering.
     // days=0 means fetch everything (used by fetchSensorDataExtended).
     const sourcesWithDays = activeSources.map(url => {
+      let finalUrl = url;
       if (days > 0) {
-        const sep = url.includes('?') ? '&' : '?';
-        return `${url}${sep}days=${days}`;
+        const sep = finalUrl.includes('?') ? '&' : '?';
+        finalUrl = `${finalUrl}${sep}days=${days}`;
       }
-      return url;
+      // Add a cache buster parameter to bypass browser caching
+      const tsSep = finalUrl.includes('?') ? '&' : '?';
+      return `${finalUrl}${tsSep}_t=${Date.now()}`;
     });
 
     const fetchPromises = sourcesWithDays.map(async (url) => {
@@ -261,7 +265,8 @@ const _doFetchSensorData = async (days = 10): Promise<{ sensors: SensorData[], g
         const response = await fetch(url, {
           method: 'GET',
           credentials: 'omit',
-          redirect: 'follow'
+          redirect: 'follow',
+          cache: 'no-store'
         });
 
         if (!response.ok) {
