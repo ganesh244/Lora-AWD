@@ -217,7 +217,6 @@ export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: 
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
         if (Date.now() - timestamp < CACHE_TTL_MS) {
-          console.log(`[dataService] Returning 10-day cache`);
           return data;
         }
       }
@@ -239,7 +238,6 @@ export const fetchSensorDataExtended = async (forceRefresh = false): Promise<{ s
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
         if (Date.now() - timestamp < FULL_HISTORY_CACHE_TTL_MS) {
-          console.log(`[dataService] Returning full-history cache`);
           return data;
         }
       }
