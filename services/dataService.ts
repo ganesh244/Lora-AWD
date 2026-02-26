@@ -99,8 +99,17 @@ export const parseDate = (dateStr: string): number => {
   if (!dateStr) return 0;
   const cleanStr = String(dateStr).trim().replace(/['"]/g, '');
 
+  // Convert ' ' to 'T' and append 'Z' if missing, so Date.parse treats it as UTC instead of local time
+  let isoStr = cleanStr;
+  if (!isoStr.includes('T') && isoStr.includes(' ')) {
+    isoStr = isoStr.replace(' ', 'T');
+  }
+  if (!isoStr.endsWith('Z') && !isoStr.includes('+') && !isoStr.match(/-\d{2}:\d{2}$/)) {
+    isoStr += 'Z';
+  }
+
   // 1. Try native Date parsing first (Handles ISO 8601 and standard formats)
-  const nativeTime = Date.parse(cleanStr);
+  const nativeTime = Date.parse(isoStr);
   if (!isNaN(nativeTime) && nativeTime > 946684800000) { // > Year 2000
     return nativeTime;
   }
@@ -140,7 +149,9 @@ export const parseDate = (dateStr: string): number => {
 
     if (year > 0 && month > 0 && day > 0) {
       // Month is 0-indexed in JS Date
-      const constructed = new Date(year, month - 1, day, hour, min, sec);
+      // Use Date.UTC to prevent the browser from assuming local timezone and creating an offset
+      const utcTime = Date.UTC(year, month - 1, day, hour, min, sec);
+      const constructed = new Date(utcTime);
       if (!isNaN(constructed.getTime())) return constructed.getTime();
     }
   }
