@@ -206,18 +206,18 @@ const isValidDeviceId = (id: string): boolean => {
 // -------------------------
 
 // In-flight request deduplication
-let _fetchInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> | null = null;
-let _fetchFullInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> | null = null;
+let _fetchInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[], _isCached?: boolean }> | null = null;
+let _fetchFullInFlight: Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[], _isCached?: boolean }> | null = null;
 
 // Default fetch — last 10 days only (quota-friendly)
-export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[], _isCached?: boolean }> => {
   if (!forceRefresh) {
     try {
       const cached = localStorage.getItem('sensor_cache');
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
         if (Date.now() - timestamp < CACHE_TTL_MS) {
-          return data;
+          return { ...data, _isCached: true };
         }
       }
     } catch (e) { /* fall through */ }
@@ -226,19 +226,27 @@ export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: 
   }
 
   // forceRefresh completely replaces the flight promise to ensure immediate real-time network requests
-  _fetchInFlight = _doFetchSensorData(10);
+  _fetchInFlight = (async () => {
+    let result = await _doFetchSensorData(10);
+    // If no data found in the last 10 days, try fallback to all data so sensors show up
+    if (result.sensors.length === 0 || !result.sensors.some(s => s.raw && s.raw.Network === 'LoRa')) {
+      console.warn("No recent LoRa data found in last 10 days. Fetching all historical data as fallback...");
+      result = await _doFetchSensorData(0);
+    }
+    return result;
+  })();
   try { return await _fetchInFlight; } finally { _fetchInFlight = null; }
 };
 
 // Extended fetch — all historical data, triggered on-demand by chart
-export const fetchSensorDataExtended = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[] }> => {
+export const fetchSensorDataExtended = async (forceRefresh = false): Promise<{ sensors: SensorData[], gateway: GatewayStatus, logs: SheetRow[], _isCached?: boolean }> => {
   if (!forceRefresh) {
     try {
       const cached = localStorage.getItem('sensor_cache_full');
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
         if (Date.now() - timestamp < FULL_HISTORY_CACHE_TTL_MS) {
-          return data;
+          return { ...data, _isCached: true };
         }
       }
     } catch (e) { /* fall through */ }
@@ -383,7 +391,10 @@ const _doFetchSensorData = async (days = 10): Promise<{ sensors: SensorData[], g
           }
 
           // 3. LoRa Gateway (Standard keys)
-          return r as SheetRow;
+          return {
+            ...r,
+            Network: "LoRa"
+          } as SheetRow;
         });
         allRows = [...allRows, ...normalized];
       }

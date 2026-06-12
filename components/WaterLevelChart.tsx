@@ -83,6 +83,9 @@ export const WaterLevelChart: React.FC<Props> = ({
         });
     }, [data, range, customStart, customEnd]);
 
+    const isWarning = useMemo(() => chartData.some(d => d.level >= 25), [chartData]);
+    const gradientColor = isWarning ? '#ef4444' : '#3b82f6';
+
     const needsFullHistory = EXTENDED_RANGES.includes(range) && !hasFullHistory;
     const chartDescription = `Water level chart showing data for the last ${range === 'all' ? 'recorded history' : range}. Contains ${chartData.length} data points.`;
 
@@ -185,8 +188,8 @@ export const WaterLevelChart: React.FC<Props> = ({
                             <ComposedChart data={chartData} margin={{ top: 20, right: 20, bottom: 10, left: 0 }}>
                                 <defs>
                                     <linearGradient id="colorLevel" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
-                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                        <stop offset="5%" stopColor={gradientColor} stopOpacity={isWarning ? 0.2 : 0.1} />
+                                        <stop offset="95%" stopColor={gradientColor} stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -230,11 +233,11 @@ export const WaterLevelChart: React.FC<Props> = ({
                                 <Area
                                     type="monotone"
                                     dataKey="level"
-                                    stroke="#3b82f6"
+                                    stroke={gradientColor}
                                     strokeWidth={2}
                                     fillOpacity={1}
                                     fill="url(#colorLevel)"
-                                    activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff', fill: '#2563eb' }}
+                                    activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff', fill: gradientColor }}
                                     animationDuration={1000}
                                 />
                                 <Brush

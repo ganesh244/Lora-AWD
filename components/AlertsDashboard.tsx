@@ -131,11 +131,44 @@ export const AlertsDashboard: React.FC<Props> = ({ sensors, weather, onNavigate 
         const rainChance = weather?.rainChance || 0;
         const isRainExpected = rainChance > 50;
 
-        if (level < 5) {
+        // ── Stage-aware water level checks ───────────────────────────────────
+        // Stages 6 (Milk/Dough), 7 (Maturity), 8 (Harvest Ready) require DRY
+        // conditions. 0 cm is CORRECT — never fire an irrigation alert here.
+        const isDrainStage = stageIndex >= 6;
+
+        if (isDrainStage) {
+            if (level > 15) {
+                alerts.push({
+                    id: `${sensor.id}-drain-needed`,
+                    category: 'Drainage',
+                    broadCategory: 'Irrigation',
+                    title: 'Drain Field for Harvest',
+                    message: `${stageName} requires dry soil. Water is still at ${level}cm — open outlets now to allow field to dry before harvest.`,
+                    severity: 'warning',
+                    icon: Droplets,
+                    plotName: sensor.name,
+                    sensorId: sensor.id,
+                });
+            } else {
+                // Dry as planned — show a positive info alert, not a red warning
+                alerts.push({
+                    id: `${sensor.id}-drying-ok`,
+                    category: 'Irrigation',
+                    broadCategory: 'Irrigation',
+                    title: 'Field Drying — On Track ✓',
+                    message: `${stageName}: Field is at ${level}cm, drying correctly for harvest. No irrigation needed at this stage.`,
+                    severity: 'info',
+                    icon: CheckCircle2,
+                    plotName: sensor.name,
+                    sensorId: sensor.id,
+                });
+            }
+        } else if (level < 5) {
+            // Non-harvest stage with critically low water
             if (isRainExpected) {
                 alerts.push({ id: `${sensor.id}-water-wait`, category: 'Irrigation', broadCategory: 'Irrigation', title: 'Delay Irrigation', message: `Level low (${level}cm) but rain expected (${rainChance}%). Wait and monitor.`, severity: 'warning', icon: CloudRain, plotName: sensor.name, sensorId: sensor.id });
             } else {
-                alerts.push({ id: `${sensor.id}-water-crit`, category: 'Irrigation', broadCategory: 'Irrigation', title: 'Start Irrigation Now', message: `Critical low level (${level}cm). Irrigate immediately to 15cm.`, severity: 'critical', icon: Droplets, plotName: sensor.name, sensorId: sensor.id });
+                alerts.push({ id: `${sensor.id}-water-crit`, category: 'Irrigation', broadCategory: 'Irrigation', title: 'Start Irrigation Now', message: `Critical low level (${level}cm). Irrigate immediately to restore soil saturation (15cm).`, severity: 'critical', icon: Droplets, plotName: sensor.name, sensorId: sensor.id });
             }
         } else if (level > 20) {
             alerts.push({ id: `${sensor.id}-water-high`, category: 'Drainage', broadCategory: 'Irrigation', title: 'Stop Irrigation / Drain', message: `Water level excessive (${level}cm). Stop inflow immediately.`, severity: isRainExpected ? 'critical' : 'warning', icon: ArrowRight, plotName: sensor.name, sensorId: sensor.id });

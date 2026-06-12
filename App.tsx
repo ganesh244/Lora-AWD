@@ -16,13 +16,16 @@ import { SettingsDashboard } from './components/SettingsDashboard';
 import { AWDTracker, CriticalLevelBanner } from './components/AWDTracker';
 import { AWDProtocolGuide } from './components/AWDProtocolGuide';
 import { fetchLocalWeather, getUserLocation, WeatherData } from './services/weatherService';
-import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, AlertTriangle, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, WifiOff, Wifi, Bell, Grab, Settings, Droplet } from 'lucide-react';
+import { Sprout, RefreshCw, ArrowLeft, Clock, LayoutDashboard, FileText, Zap, Radio, ArrowRight, ArrowUp, ArrowDown, MapPin, CloudRain, Sun, CloudSun, Smartphone, Edit2, Check, X, Wifi, Bell, Grab, Settings, Droplet } from 'lucide-react';
 import { LanguageProvider, useTranslation } from './services/translations';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Toaster, toast } from 'sonner';
 
 // Wrapper to provide Language Context
 export default function AppWrapper() {
   return (
     <LanguageProvider>
+      <Toaster position="bottom-right" richColors />
       <App />
     </LanguageProvider>
   );
@@ -161,37 +164,39 @@ function App() {
       const data = await fetchSensorData(forceRefresh);
 
       if (data.sensors.length > 0) {
-        // Slim the cache: keep only the last 48 history points per sensor
-        // (≈24h at 30-min intervals) so we stay well under the 5MB localStorage limit.
-        // Full history is fetched on demand by the chart when user picks 30d/Max/Custom.
-        const slimData = {
-          ...data,
-          sensors: data.sensors.map(s => ({
-            ...s,
-            history: s.history.slice(-48)
-          })),
-          // Logs are the biggest part — keep only the most recent 500 rows for offline fallback
-          logs: data.logs.slice(0, 500)
-        };
+        if (!data._isCached) {
+          // Slim the cache: keep only the last 48 history points per sensor
+          // (≈24h at 30-min intervals) so we stay well under the 5MB localStorage limit.
+          // Full history is fetched on demand by the chart when user picks 30d/Max/Custom.
+          const slimData = {
+            ...data,
+            sensors: data.sensors.map(s => ({
+              ...s,
+              history: s.history.slice(-48)
+            })),
+            // Logs are the biggest part — keep only the most recent 500 rows for offline fallback
+            logs: data.logs.slice(0, 500)
+          };
 
-        try {
-          localStorage.setItem('sensor_cache', JSON.stringify({
-            timestamp: Date.now(),
-            data: slimData
-          }));
-        } catch (quotaErr) {
-          // localStorage is full — evict full-history and cloud caches then retry once
-          console.warn('[cache] Quota exceeded, clearing old caches and retrying…', quotaErr);
           try {
-            localStorage.removeItem('sensor_cache_full');
-            localStorage.removeItem('cloud_settings_cache');
             localStorage.setItem('sensor_cache', JSON.stringify({
               timestamp: Date.now(),
               data: slimData
             }));
-          } catch (retryErr) {
-            // Still full — skip caching entirely, data is already in React state
-            console.warn('[cache] Retry also failed, running without cache', retryErr);
+          } catch (quotaErr) {
+            // localStorage is full — evict full-history and cloud caches then retry once
+            console.warn('[cache] Quota exceeded, clearing old caches and retrying…', quotaErr);
+            try {
+              localStorage.removeItem('sensor_cache_full');
+              localStorage.removeItem('cloud_settings_cache');
+              localStorage.setItem('sensor_cache', JSON.stringify({
+                timestamp: Date.now(),
+                data: slimData
+              }));
+            } catch (retryErr) {
+              // Still full — skip caching entirely, data is already in React state
+              console.warn('[cache] Retry also failed, running without cache', retryErr);
+            }
           }
         }
 
@@ -232,6 +237,13 @@ function App() {
   };
 
   useEffect(() => {
+    // Initialize dark mode
+    if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+
     loadData();
     // Poll every 5 minutes. fetchSensorData also has a 10-min cache TTL,
     // so live fetches only happen when the cache is stale — this prevents
@@ -239,6 +251,24 @@ function App() {
     const interval = setInterval(() => loadData(false), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (error && !usingCache) {
+      toast.error('Sync Error', {
+        description: error,
+        action: { label: 'Retry', onClick: () => loadData(true) }
+      });
+    }
+  }, [error, usingCache]);
+
+  useEffect(() => {
+    if (usingCache) {
+      toast.warning('Offline Mode', {
+        description: `Displaying cached data from ${lastRefreshed.toLocaleString()}. Live updates paused.`,
+        action: { label: 'Retry', onClick: () => loadData(true) }
+      });
+    }
+  }, [usingCache, lastRefreshed]);
 
   // Lazy-load full history for a specific sensor when the user requests
   // an extended chart range (30d / Max / Custom).
@@ -470,7 +500,7 @@ function App() {
   const isDeviceType = (sensor: SensorData, type: 'lora' | 'gsm' | 'wifi'): boolean => {
     const net = sensor.raw.Network?.toLowerCase() || '';
     const id = sensor.id.toLowerCase();
-    const isLora = id.includes('lora');
+    const isLora = id.includes('lora') || net.includes('lora');
     if (type === 'lora') return isLora;
     if (isLora) return false;
     if (type === 'wifi') return net.includes('wifi') || id.includes('wifi');
@@ -528,8 +558,8 @@ function App() {
   }, [sensors]);
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] text-slate-800 font-sans selection:bg-emerald-100">
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm backdrop-blur-xl bg-white/90 print:hidden">
+    <div className="min-h-screen bg-[#f8f9fa] dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans selection:bg-emerald-100 dark:selection:bg-emerald-900 transition-colors duration-300">
+      <nav className="border-b border-slate-200/50 dark:border-slate-800/80 sticky top-0 z-30 shadow-sm backdrop-blur-2xl bg-white/80 dark:bg-slate-900/80 transition-colors duration-300 print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center gap-3">
@@ -607,7 +637,7 @@ function App() {
         </div>
 
         {/* Mobile Navbar */}
-        <div className="grid grid-cols-5 md:hidden border-t border-slate-100 bg-white">
+        <div className="grid grid-cols-5 md:hidden border-t border-slate-200/50 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl transition-colors duration-300">
           <button
             onClick={() => { setActiveTab('dashboard'); setSelectedSensor(null); }}
             className={`py-3 text-xs font-bold uppercase tracking-wide text-center border-b-2 transition-colors flex flex-col items-center justify-center gap-1 ${activeTab === 'dashboard' ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50' : 'border-transparent text-slate-500'}`}
@@ -643,33 +673,16 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-        {error && !usingCache && (
-          <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6 flex items-center gap-4 text-red-800 shadow-sm animate-in slide-in-from-top-2">
-            <div className="bg-red-100 p-2 rounded-full shrink-0">
-              <AlertTriangle className="text-red-600" size={20} />
-            </div>
-            <div className="flex-1">
-              <p className="font-bold text-sm text-red-900">Sync Error</p>
-              <p className="text-xs text-red-700 mt-0.5">{error}</p>
-            </div>
-            <button onClick={() => loadData(true)} className="px-4 py-2 bg-white border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-red-50 shadow-sm">Retry</button>
-          </div>
-        )}
-
-        {usingCache && (
-          <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-6 flex items-center gap-4 text-amber-800 shadow-sm animate-in slide-in-from-top-2">
-            <div className="bg-amber-100 p-2 rounded-full shrink-0">
-              <WifiOff className="text-amber-600" size={20} />
-            </div>
-            <div className="flex-1">
-              <p className="font-bold text-sm text-amber-900">Offline Mode</p>
-              <p className="text-xs text-amber-700 mt-0.5">Displaying cached data from {lastRefreshed.toLocaleString()}. Live updates paused.</p>
-            </div>
-            <button onClick={() => loadData(true)} className="px-4 py-2 bg-white border border-amber-200 text-amber-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-amber-50 shadow-sm">Retry</button>
-          </div>
-        )}
-
-        {activeTab === 'weather' ? (
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab + (selectedSensor ? '-' + selectedSensor.id : '')}
+            initial={{ opacity: 0, scale: 0.98, filter: 'blur(4px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, scale: 0.98, filter: 'blur(4px)' }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="w-full"
+          >
+            {activeTab === 'weather' ? (
           <WeatherDashboard
             weather={weather}
             loading={weatherLoading}
@@ -772,6 +785,13 @@ function App() {
                         <span className="text-3xl font-black text-slate-900">{selectedSensor.currentLevel}</span>
                         <span className="text-sm text-slate-400 font-semibold">cm</span>
                       </div>
+                      {(() => {
+                        const si = getCropInfo(selectedSensor.id)?.stageIndex ?? 1;
+                        const lvl = selectedSensor.currentLevel;
+                        if (si >= 6 && lvl <= 15) return <span className="text-[10px] font-bold text-emerald-600">Drying ✓</span>;
+                        if (lvl > 15) return <span className="text-[10px] font-bold text-blue-500">+{Math.round(lvl-15)}cm above soil</span>;
+                        return <span className="text-[10px] font-bold text-amber-500">{Math.abs(Math.round(lvl-15))}cm below soil</span>;
+                      })()}
                     </div>
                     <div className="w-px h-10 bg-slate-100" />
                     <div>
@@ -1047,18 +1067,31 @@ function App() {
                             <span className="text-base font-medium text-slate-400">{t('unit.cm')}</span>
                           </div>
                           <div className="text-xs font-semibold">
-                            {sensor.currentLevel >= 15 ? (
-                              <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100 flex items-center w-fit gap-1">
-                                <ArrowUp size={12} /> {Math.round(sensor.currentLevel - 15)}cm {t('water.above')}
-                              </span>
-                            ) : (
-                              <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md border border-amber-100 flex items-center w-fit gap-1">
-                                <ArrowDown size={12} /> {Math.abs(Math.round(sensor.currentLevel - 15))}cm {t('water.below')}
-                              </span>
-                            )}
+                            {(() => {
+                              const isDrainStage = cropInfo && cropInfo.stageIndex >= 6;
+                              if (isDrainStage && sensor.currentLevel <= 15) {
+                                return (
+                                  <span className="text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200 flex items-center w-fit gap-1">
+                                    <Sprout size={12} /> Drying ✓
+                                  </span>
+                                );
+                              }
+                              if (sensor.currentLevel >= 15) {
+                                return (
+                                  <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100 flex items-center w-fit gap-1">
+                                    <ArrowUp size={12} /> {Math.round(sensor.currentLevel - 15)}cm {t('water.above')}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md border border-amber-100 flex items-center w-fit gap-1">
+                                  <ArrowDown size={12} /> {Math.abs(Math.round(sensor.currentLevel - 15))}cm {t('water.below')}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </div>
-                        <AWDGauge level={sensor.currentLevel} />
+                        <AWDGauge level={sensor.currentLevel} stageIndex={cropInfo?.stageIndex ?? 1} />
                       </div>
 
                       {/* Crop Stage Info with Visual and Progress Bar */}
@@ -1166,6 +1199,8 @@ function App() {
             )}
           </>
         )}
+          </motion.div>
+        </AnimatePresence>
       </main>
     </div>
   );

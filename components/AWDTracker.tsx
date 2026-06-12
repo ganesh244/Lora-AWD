@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Droplets, RefreshCw, CheckCircle, AlertTriangle, TrendingDown, ListChecks, Plus, Clock, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { saveCloudSetting } from '../services/dataService';
+import { calculateStage } from './CropManager';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface HistoryPoint { time: string; level: number; }
@@ -136,7 +137,20 @@ export const AWDTracker: React.FC<Props> = ({ sensorId, sensorName, currentLevel
     // ── Computed stats ──────────────────────────────────────────────────────
     const awdCycles = useMemo(() => countAWDCycles(history), [history]);
     const percolationRate = useMemo(() => calcPercolationRate(history), [history]);
-    const isCritical = currentLevel <= DANGER_LEVEL;
+
+    // Check if crop is in a harvest/drain stage — if so, low water is CORRECT
+    const isHarvestStage = useMemo(() => {
+        try {
+            const saved = localStorage.getItem(`crop_${sensorId}`);
+            if (saved) {
+                const info = calculateStage(JSON.parse(saved));
+                return info.stageIndex >= 6;
+            }
+        } catch { }
+        return false;
+    }, [sensorId]);
+
+    const isCritical = currentLevel <= DANGER_LEVEL && !isHarvestStage;
     const lastDrain = events.find(e => e.type === 'drain');
     const lastRefill = events.find(e => e.type === 'refill');
 
@@ -330,7 +344,19 @@ export const AWDTracker: React.FC<Props> = ({ sensorId, sensorName, currentLevel
 export const CriticalLevelBanner: React.FC<{
     sensors: { id: string; name: string; currentLevel: number }[];
 }> = ({ sensors }) => {
-    const critical = sensors.filter(s => s.currentLevel <= DANGER_LEVEL);
+    // Skip sensors in harvest/ripening stages (index >= 6) where 0 cm is CORRECT.
+    const critical = sensors.filter(s => {
+        if (s.currentLevel > DANGER_LEVEL) return false;
+        try {
+            const saved = localStorage.getItem(`crop_${s.id}`);
+            if (saved) {
+                const info = calculateStage(JSON.parse(saved));
+                if (info.stageIndex >= 6) return false; // drying for harvest — not a problem
+            }
+        } catch { }
+        return true;
+    });
+
     if (critical.length === 0) return null;
 
     return (

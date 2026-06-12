@@ -1,3 +1,95 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Rice Plant Sway ─────────────────────────────────────────────────── */
+@keyframes sway {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(2.5deg); }
+  75%  { transform: rotate(-2deg); }
+  100% { transform: rotate(0deg); }
+}
+.animate-sway {
+  animation: sway 3s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+.animate-sway-slow {
+  animation: sway 5s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+.animate-sway-delay {
+  animation: sway 3.5s ease-in-out infinite;
+  animation-delay: 0.8s;
+  transform-origin: bottom center;
+}
+
+/* ── Water Ripple (surface shimmer) ──────────────────────────────────── */
+@keyframes water-ripple {
+  0%   { opacity: 0.3; transform: scaleX(0.8) translateX(-10%); }
+  50%  { opacity: 0.7; transform: scaleX(1.1) translateX(5%); }
+  100% { opacity: 0.3; transform: scaleX(0.8) translateX(-10%); }
+}
+.animate-water-ripple {
+  animation: water-ripple 2.5s ease-in-out infinite;
+}
+.animate-water-ripple-slow {
+  animation: water-ripple 4s ease-in-out infinite;
+  animation-delay: 1.2s;
+}
+
+/* ── Bubble Float ────────────────────────────────────────────────────── */
+@keyframes float-up {
+  0%   { transform: translateY(0) scale(1);    opacity: 0.6; }
+  50%  { transform: translateY(-40%) scale(1.1); opacity: 0.4; }
+  100% { transform: translateY(-90%) scale(0.8); opacity: 0; }
+}
+.animate-bubble {
+  animation: float-up 2.8s ease-in-out infinite;
+}
+.animate-bubble-delay1 {
+  animation: float-up 3.2s ease-in-out infinite;
+  animation-delay: 0.9s;
+}
+.animate-bubble-delay2 {
+  animation: float-up 2.5s ease-in-out infinite;
+  animation-delay: 1.7s;
+}
+
+/* ── Harvest / Grain Shimmer ─────────────────────────────────────────── */
+@keyframes harvest-shimmer {
+  0%   { opacity: 0.8; filter: brightness(1); }
+  50%  { opacity: 1;   filter: brightness(1.15) saturate(1.2); }
+  100% { opacity: 0.8; filter: brightness(1); }
+}
+.animate-harvest-shimmer {
+  animation: harvest-shimmer 2s ease-in-out infinite;
+}
+
+/* ── Pulse Soft ─────────────────────────────────────────────────────── */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2.5s ease-in-out infinite;
+}
+
+/* ── Grain Drop ─────────────────────────────────────────────────────── */
+@keyframes grain-droop {
+  0%   { transform: rotate(0deg) translateY(0); }
+  50%  { transform: rotate(3deg) translateY(1px); }
+  100% { transform: rotate(0deg) translateY(0); }
+}
+.animate-grain-droop {
+  animation: grain-droop 4s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+/* ── Water wave (horizontal scroll inside pipe) ──────────────────────── */
+@keyframes wave-scroll {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+.animate-wave-scroll {
+  animation: wave-scroll 3s linear infinite;
+}

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, RotateCcw, Trash2, Plus, Database, Droplets, AlertTriangle, CheckCircle2, LayoutDashboard, Languages, Move } from 'lucide-react';
+import { Settings, Save, RotateCcw, Trash2, Plus, Database, Droplets, AlertTriangle, CheckCircle2, LayoutDashboard, Languages, Move, Moon, Sun } from 'lucide-react';
 import { saveDataSources, resetDataSources } from '../services/dataService';
 import { useTranslation, LANGUAGES } from '../services/translations';
 
@@ -14,6 +14,22 @@ export const SettingsDashboard: React.FC<Props> = ({ onClearCache, onSettingsCha
     const { language, setLanguage } = useTranslation();
     const [lowThreshold, setLowThreshold] = useState(5);
     const [highThreshold, setHighThreshold] = useState(20);
+
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        return localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    });
+
+    const toggleDarkMode = () => {
+        const newMode = !isDarkMode;
+        setIsDarkMode(newMode);
+        if (newMode) {
+            document.documentElement.classList.add('dark');
+            localStorage.theme = 'dark';
+        } else {
+            document.documentElement.classList.remove('dark');
+            localStorage.theme = 'light';
+        }
+    };
 
     const [sources, setSources] = useState<string[]>([]);
     const [newSource, setNewSource] = useState('');
@@ -113,6 +129,19 @@ export const SettingsDashboard: React.FC<Props> = ({ onClearCache, onSettingsCha
                                 </button>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Dark Mode */}
+                    <div className="pt-4 border-t border-slate-100">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            {isDarkMode ? <Moon size={16} className="text-slate-400" /> : <Sun size={16} className="text-slate-400" />} Theme Preference
+                        </label>
+                        <button
+                            onClick={toggleDarkMode}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors border ${isDarkMode ? 'bg-slate-800 text-white border-slate-700' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            {isDarkMode ? <Moon size={16} /> : <Sun size={16} />} {isDarkMode ? 'Dark Mode On' : 'Light Mode On'}
+                        </button>
                     </div>
 
                     {/* Arrange */}
