@@ -1,20 +1,23 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# LoRa Water Monitor
 
-# Run and deploy your AI Studio app
+Real-time dashboard for LoRaWAN Water Level Gateway connected via Google Sheets.
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1jAt7g1tOLJ0hQF0wFX7fjvly5_Il8xyk
+## Features
+- Real-time telemetry monitoring
+- Alternate Wetting and Drying (AWD) tracking and guidance
+- Interactive water level charts and gauges
+- Automated alerts and settings dashboard
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```bash
+   npm install
+   ```
+2. Set up your environment variables in `.env` (e.g. `MONGO_URI`).
+3. Run the application in development mode:
+   ```bash
+   npm run dev
+   ```
