@@ -16,7 +16,7 @@ const DEFAULT_DATA_SOURCES = [
   'https://script.google.com/macros/s/AKfycby61hthQVULKFW_1--hI0V2t-gjxOVSnUzZ6iHK-Q-RT2cpUbvgvmM7BfFt5rSOuR0MFw/exec',
 
   // 3. Standalone WiFi Device Sheet
-  'https://script.google.com/macros/s/AKfycbyUep63cVY28X9M-P-1ypTfXILhTCb9h0_YJkqQkiwoNlkhgOavrj2qlESiXge8OPEA0w/exec?action=readAll'
+  'https://script.google.com/macros/s/AKfycbxnK0YDb1hYhx5YPrSOtIgSDY0ctRokhGP_OmMcmzxlM9neGbGBbz5pxFwh-8H00ibgoQ/exec'
 ];
 
 // Helper to get active sources
@@ -228,9 +228,10 @@ export const fetchSensorData = async (forceRefresh = false): Promise<{ sensors: 
   // forceRefresh completely replaces the flight promise to ensure immediate real-time network requests
   _fetchInFlight = (async () => {
     let result = await _doFetchSensorData(10);
-    // If no data found in the last 10 days, try fallback to all data so sensors show up
-    if (result.sensors.length === 0 || !result.sensors.some(s => s.raw && s.raw.Network === 'LoRa')) {
-      console.warn("No recent LoRa data found in last 10 days. Fetching all historical data as fallback...");
+    // If no sensors at all were found in the last 10 days, fall back to all historical data.
+    // We deliberately do NOT check for LoRa specifically — the system may be WiFi/GSM-only.
+    if (result.sensors.length === 0) {
+      console.warn("No sensors found in last 10 days. Fetching all historical data as fallback...");
       result = await _doFetchSensorData(0);
     }
     return result;

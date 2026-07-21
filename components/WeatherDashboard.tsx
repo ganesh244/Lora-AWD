@@ -4,7 +4,7 @@ import { WeatherData, DailyForecast } from '../services/weatherService';
 import {
     CloudRain, Sun, MapPin, Droplets, Calendar, RefreshCw, Cloud, CloudLightning,
     Snowflake, CloudFog, Wind, Clock, ArrowUp, ArrowDown, Navigation, Edit2, Check, X,
-    Loader2, Thermometer, AlertTriangle, Zap, Sunrise, Sunset, Eye, Leaf
+    Loader2, Thermometer, AlertTriangle, Zap, Sunrise, Sunset, Eye, Leaf, Gauge, Droplet
 } from 'lucide-react';
 
 interface Props {
@@ -252,7 +252,12 @@ export const WeatherDashboard: React.FC<Props> = ({
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
                         {/* Temp + condition */}
                         <div className="flex items-center gap-5">
-                            <span className="text-8xl font-black tracking-tighter leading-none">{weather.temp}°</span>
+                            <div className="flex flex-col items-center">
+                                <span className="text-8xl font-black tracking-tighter leading-none">{weather.temp}°</span>
+                                {weather.apparentTemp !== weather.temp && (
+                                    <span className="text-xs text-blue-200 font-medium mt-1">Feels like {Math.round(weather.apparentTemp)}°</span>
+                                )}
+                            </div>
                             <div>
                                 <div className="mb-1">{getWeatherIcon(weather.conditionCode, 36)}</div>
                                 <p className="text-xl font-bold">{weather.conditionText}</p>
@@ -301,7 +306,7 @@ export const WeatherDashboard: React.FC<Props> = ({
             </div>
 
             {/* ── Agricultural Insight Cards ──────────────────────────────────────── */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 
                 {/* ET₀ */}
                 <div className={`rounded-2xl border p-4 ${et0Bg}`}>
@@ -360,6 +365,73 @@ export const WeatherDashboard: React.FC<Props> = ({
                             ? `${heatDays} day${heatDays > 1 ? 's' : ''} ≥35°C forecast. Flood field during heading.`
                             : 'No heat-stress days forecast this week.'}
                     </p>
+                </div>
+
+                {/* Soil Moisture Deficit */}
+                {(() => {
+                    const smd = weather.moistureDeficit ?? 0;
+                    const smdHigh = smd >= 8;
+                    const smdMed = smd >= 4;
+                    const smdBg = smdHigh ? 'bg-red-50 border-red-100' : smdMed ? 'bg-amber-50 border-amber-100' : 'bg-emerald-50 border-emerald-100';
+                    const smdColor = smdHigh ? 'text-red-600' : smdMed ? 'text-amber-600' : 'text-emerald-600';
+                    return (
+                        <div className={`rounded-2xl border p-4 col-span-2 lg:col-span-1 ${smdBg}`}>
+                            <div className="flex items-center gap-2 mb-2">
+                                <div className="p-1.5 bg-white rounded-lg shadow-sm"><Gauge size={14} className={smdColor} /></div>
+                                <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Moisture Deficit</span>
+                            </div>
+                            <p className={`text-3xl font-black ${smdColor}`}>{smd}<span className="text-sm font-semibold ml-1">mm</span></p>
+                            <p className="text-xs text-slate-500 mt-1 leading-tight">
+                                {smdHigh ? 'High deficit — irrigate promptly' : smdMed ? 'Moderate loss — monitor level' : 'Soil moisture OK — no deficit'}
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-1">Based on last 2 days ET₀ − rain</p>
+                        </div>
+                    );
+                })()}
+            </div>
+
+            {/* ── 7-Day Irrigation Schedule ────────────────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                <div className="flex items-center gap-2 mb-4">
+                    <Droplet size={16} className="text-blue-500" />
+                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Irrigation Schedule</h3>
+                    <span className="ml-auto text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-full">7-day outlook</span>
+                </div>
+                <div className="grid grid-cols-7 gap-2">
+                    {weather.daily.slice(0, 7).map((day, i) => {
+                        const date = new Date(day.time);
+                        const label = i === 0 ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'short' });
+                        const dateShort = date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+                        // Decision logic
+                        const rainComing = day.rainSum > 5 || day.rainChance >= 60;
+                        const highET0 = day.et0 > 5;
+                        const isStorm = day.conditionCode >= 95;
+                        let action: 'storm' | 'rain' | 'irrigate' | 'monitor';
+                        if (isStorm) action = 'storm';
+                        else if (rainComing) action = 'rain';
+                        else if (highET0) action = 'irrigate';
+                        else action = 'monitor';
+                        const cfg = {
+                            storm:   { bg: 'bg-purple-50 border-purple-200', dot: 'bg-purple-500', text: 'text-purple-700', label: '⛈ Storm', tip: 'Check drains' },
+                            rain:    { bg: 'bg-blue-50 border-blue-200',   dot: 'bg-blue-400',   text: 'text-blue-700',   label: '🌧 Rain',  tip: 'Skip irrigation' },
+                            irrigate:{ bg: 'bg-teal-50 border-teal-200',   dot: 'bg-teal-500',   text: 'text-teal-700',   label: '💧 Irrigate', tip: `ET₀ ${day.et0}mm` },
+                            monitor: { bg: 'bg-slate-50 border-slate-200', dot: 'bg-slate-300',  text: 'text-slate-600', label: '👁 Monitor', tip: 'Stable' },
+                        }[action];
+                        return (
+                            <div key={day.time} className={`flex flex-col items-center p-2 rounded-xl border ${cfg.bg} ${i === 0 ? 'ring-2 ring-offset-1 ring-blue-300' : ''}`}>
+                                <span className={`text-[10px] font-black uppercase tracking-wide ${i === 0 ? 'text-blue-600' : 'text-slate-500'}`}>{label}</span>
+                                <span className="text-[9px] text-slate-400 mb-2">{dateShort}</span>
+                                <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot} mb-1.5 shadow-sm`} />
+                                <span className={`text-[10px] font-bold ${cfg.text} text-center leading-tight`}>{cfg.label}</span>
+                                <span className="text-[9px] text-slate-400 mt-0.5 text-center leading-tight">{cfg.tip}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+                <div className="flex flex-wrap gap-3 mt-3 text-[10px] text-slate-400">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>Rain &gt;5mm / 60%+ chance — skip</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>ET₀ &gt;5mm — irrigate</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>Storm — check drains</span>
                 </div>
             </div>
 

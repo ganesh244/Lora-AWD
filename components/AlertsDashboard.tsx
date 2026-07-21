@@ -129,7 +129,9 @@ export const AlertsDashboard: React.FC<Props> = ({ sensors, weather, onNavigate 
 
         const level = sensor.currentLevel;
         const rainChance = weather?.rainChance || 0;
-        const isRainExpected = rainChance > 50;
+        const rainForecast24h = weather?.rainForecast24h || 0;
+        // Consistent with IrrigationAdvice: fire on > 50% chance OR > 5mm in next 24h
+        const isRainExpected = rainChance > 50 || rainForecast24h > 5;
 
         // ── Stage-aware water level checks ───────────────────────────────────
         // Stages 6 (Milk/Dough), 7 (Maturity), 8 (Harvest Ready) require DRY
@@ -178,8 +180,73 @@ export const AlertsDashboard: React.FC<Props> = ({ sensors, weather, onNavigate 
             if (weather.windSpeed > 25 && stageIndex >= 4) {
                 alerts.push({ id: `${sensor.id}-wind`, category: 'Weather', broadCategory: 'Weather', title: 'High Wind Alert', message: `Wind ${weather.windSpeed}km/h. Risk of lodging for ${stageName} crop. Drain field to anchor roots.`, severity: 'critical', icon: Wind, plotName: sensor.name, sensorId: sensor.id });
             }
-            if (weather.temp > 35 && stageIndex === 4) {
-                alerts.push({ id: `${sensor.id}-heat`, category: 'Weather', broadCategory: 'Weather', title: 'Heat Stress', message: `High temp (${weather.temp}°C) during flowering. Flood field to cool canopy.`, severity: 'critical', icon: Thermometer, plotName: sensor.name, sensorId: sensor.id });
+            // stageIndex 5 = Heading / Flowering (per CropManager CROP_STAGES)
+            if (weather.temp > 35 && stageIndex === 5) {
+                alerts.push({ id: `${sensor.id}-heat`, category: 'Weather', broadCategory: 'Weather', title: 'Heat Stress', message: `High temp (${weather.temp}°C) during Heading/Flowering. Flood field to cool canopy.`, severity: 'critical', icon: Thermometer, plotName: sensor.name, sensorId: sensor.id });
+            }
+
+            // ── Look-ahead alerts (from weather.daily forecast) ──────────────────
+            const dailyForecast = weather.daily ?? [];
+
+            // Storm in next 3 days
+            const stormDays = dailyForecast.slice(0, 3).filter(d => d.conditionCode >= 95);
+            if (stormDays.length > 0) {
+                const stormDay = stormDays[0];
+                const dayLabel = new Date(stormDay.time).toLocaleDateString('en-US', { weekday: 'short' });
+                alerts.push({
+                    id: `${sensor.id}-storm-forecast`,
+                    category: 'Weather', broadCategory: 'Weather',
+                    title: 'Thunderstorm Forecast',
+                    message: `Storm expected ${dayLabel}. Ensure drainage channels are clear. Avoid field operations on that day.`,
+                    severity: 'warning', icon: Wind, plotName: sensor.name, sensorId: sensor.id,
+                });
+            }
+
+            // 3+ consecutive rainy days (good — suppress irrigation)
+            let consecutiveRainDays = 0;
+            for (const d of dailyForecast.slice(0, 7)) {
+                if (d.rainChance >= 60 || d.rainSum > 3) consecutiveRainDays++;
+                else break;
+            }
+            if (consecutiveRainDays >= 3) {
+                alerts.push({
+                    id: `${sensor.id}-rain-streak`,
+                    category: 'Weather', broadCategory: 'Weather',
+                    title: `${consecutiveRainDays}-Day Rain Streak`,
+                    message: `Rain forecast for ${consecutiveRainDays} consecutive days. No irrigation needed. Monitor for waterlogging.`,
+                    severity: 'info', icon: CloudRain, plotName: sensor.name, sensorId: sensor.id,
+                });
+            }
+
+            // Forecast wind > 40 km/h within next 3 days (lodging risk for heading+ crops)
+            if (stageIndex >= 4) {
+                const highWindDay = dailyForecast.slice(0, 3).find(d => d.windSpeedMax > 40);
+                if (highWindDay && weather.windSpeed <= 25) { // don't duplicate if already showing live alert
+                    const dayLabel = new Date(highWindDay.time).toLocaleDateString('en-US', { weekday: 'short' });
+                    alerts.push({
+                        id: `${sensor.id}-wind-forecast`,
+                        category: 'Weather', broadCategory: 'Weather',
+                        title: 'Strong Wind Forecast',
+                        message: `Winds up to ${Math.round(highWindDay.windSpeedMax)}km/h forecast ${dayLabel}. Drain field to anchor roots before wind arrives.`,
+                        severity: 'warning', icon: Wind, plotName: sensor.name, sensorId: sensor.id,
+                    });
+                }
+            }
+
+            // ET₀ streak: 2+ consecutive days ≥ 6mm → irrigation pressure building
+            let et0StreakDays = 0;
+            for (const d of dailyForecast.slice(0, 5)) {
+                if (d.et0 >= 6) et0StreakDays++;
+                else break;
+            }
+            if (et0StreakDays >= 2 && !isDrainStage) {
+                alerts.push({
+                    id: `${sensor.id}-et0-streak`,
+                    category: 'Weather', broadCategory: 'Weather',
+                    title: 'High Evaporation Streak',
+                    message: `ET₀ ≥ 6mm/day for ${et0StreakDays} days. High water loss expected — check field level daily and irrigate early.`,
+                    severity: 'warning', icon: Thermometer, plotName: sensor.name, sensorId: sensor.id,
+                });
             }
         }
 
@@ -193,9 +260,11 @@ export const AlertsDashboard: React.FC<Props> = ({ sensors, weather, onNavigate 
 
         all.forEach(alert => {
             const isRealTime = alert.broadCategory === 'Irrigation' || alert.broadCategory === 'Weather';
+            const matchesCategory = selectedCategory === 'All' || alert.broadCategory === selectedCategory;
+            // Real-time alerts (water level / weather) are never completable — always show active
             if (completedIds.has(alert.id) && !isRealTime) {
                 done.push(alert);
-            } else if (selectedCategory === 'All' || alert.broadCategory === selectedCategory) {
+            } else if (matchesCategory) {
                 active.push(alert);
             }
         });
@@ -394,6 +463,11 @@ export const AlertsDashboard: React.FC<Props> = ({ sensors, weather, onNavigate 
                     </div>
                     <h3 className="text-slate-800 font-black text-lg">All Clear 🎉</h3>
                     <p className="text-slate-400 text-sm mt-1">No active alerts — your fields are healthy.</p>
+                    {!weather && (
+                        <p className="text-amber-600 text-xs mt-3 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 inline-block font-medium">
+                            ⚠️ Set field location in Weather tab to enable wind &amp; heat-stress alerts.
+                        </p>
+                    )}
                 </div>
             )}
 

@@ -82,9 +82,9 @@ export const IrrigationAdvice: React.FC<Props> = ({ level, weather, cropStage })
     // 2. Identify Stage Requirements
     // Stage indices from CropManager: 0=Nursery,1=Transplant,2=Tillering,3=StemElong,
     // 4=Booting,5=Flowering,6=Milk/Dough,7=Maturity,8=Harvest Ready
-    const needsFlood = [0, 1, 3, 4].includes(stageIndex); // Nursery, Transplant, Booting, Flowering
-    const allowAWD = [2, 5].includes(stageIndex);          // Tillering, Heading
-    const needsDrain = [6, 7, 8].includes(stageIndex);    // Milk/Dough, Maturity, Harvest Ready
+    const needsFlood = [0, 1, 3, 4, 5].includes(stageIndex); // Nursery, Transplant, Stem Elongation, Booting, Flowering
+    const allowAWD = [2].includes(stageIndex);                // Tillering only
+    const needsDrain = [6, 7, 8].includes(stageIndex);       // Milk/Dough, Maturity, Harvest Ready
 
     // --- PRIORITY 1: HARVEST PREP (Drainage) ---
     if (needsDrain) {

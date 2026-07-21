@@ -45,6 +45,8 @@ export const DataLogs: React.FC<Props> = ({ logs, error }) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    // Revoke the object URL to release the memory blob
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   if (error) {
